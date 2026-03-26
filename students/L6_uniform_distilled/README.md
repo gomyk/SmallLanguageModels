@@ -2,11 +2,11 @@
 language: ["ko", "en", "ja", "zh", "es", "fr", "de", "pt", "it", "ru", "ar", "hi", "th", "vi", "id", "tr", "nl", "pl"]
 tags:
 - sentence-transformers
-- intent-classification
 - multilingual
 - layer-pruning
 - vocab-pruning
 - knowledge-distillation
+- minilm-l12
 library_name: sentence-transformers
 pipeline_tag: sentence-similarity
 license: apache-2.0
@@ -14,109 +14,112 @@ license: apache-2.0
 
 # L6_uniform_distilled (Distilled)
 
-Lightweight multilingual sentence encoder optimized for intent classification.
-Created from `paraphrase-multilingual-MiniLM-L12-v2` via layer pruning + corpus-based vocabulary pruning + knowledge distillation.
+Lightweight sentence encoder created from `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` via layer pruning + vocabulary pruning + knowledge distillation.
 
 ## Model Details
 
 | Property | Value |
-|----------|-------|
-| Teacher | paraphrase-multilingual-MiniLM-L12-v2 |
-| Architecture | XLM-RoBERTa (pruned) |
+|---|---|
+| Teacher | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 |
+| Architecture | MiniLM-L12 (pruned) |
 | Hidden dim | 384 |
 | Layers | 6 / 12 |
 | Layer indices | [0, 2, 4, 7, 9, 11] |
 | Strategy | 6 layers, evenly spaced (general-purpose) |
-| Vocab size | ~38,330 (pruned from 250K) |
-| Parameters | 26,184,576 |
-| Safetensors size | 98.1MB |
+| Parameters | 106,825,344 |
+| Model size (FP32) | 98.1MB |
 | Distilled | Yes |
 
-## Supported Languages (18)
+## Architecture
 
-ko, en, ja, zh, es, fr, de, pt, it, ru, ar, hi, th, vi, id, tr, nl, pl
+```
+==============================================================
+  TEACHER: MiniLM-L12  →  STUDENT: 6L / 38,775 vocab
+==============================================================
+
+            TEACHER                        STUDENT          
+  ───────────────────────────    ───────────────────────────
+
+  ┌─────────────────────────┐    ┌─────────────────────────┐
+  │   Input Tokens          │    │   Input Tokens          │
+  └────────────┬────────────┘    └────────────┬────────────┘
+               │                              │
+  ┌────────────┴────────────┐    ┌────────────┴────────────┐
+  │  Embeddings             │    │  Embeddings (pruned)    │
+  │  vocab: 250,002         │    │  vocab:  38,775         │
+  │  dim:  384              │    │  dim:  384              │
+  └────────────┬────────────┘    └────────────┬────────────┘
+               │                              │
+  ┌─────────────────────────┐    ┌─────────────────────────┐
+  │  Layer  0               │ ──►  │  Layer  0 ← L0         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  1               │  ╳   │                         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  2               │ ──►  │  Layer  1 ← L2         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  3               │  ╳   │                         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  4               │ ──►  │  Layer  2 ← L4         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  5               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  6               │  ╳   │                         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  7               │ ──►  │  Layer  3 ← L7         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  8               │  ╳   │                         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  9               │ ──►  │  Layer  4 ← L9         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer 10               │  ╳   │                         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer 11               │ ──►  │  Layer  5 ← L11        │
+  └────────────┬────────────┘    └────────────┬────────────┘
+               │                              │
+  ┌────────────┴────────────┐    ┌────────────┴────────────┐
+  │  Mean Pooling           │    │  Mean Pooling           │
+  │  → 384d embedding       │    │  → 384d embedding       │
+  └─────────────────────────┘    └─────────────────────────┘
+
+  Size: 448.0MB (FP32)           →  98.1MB (FP32)
+  Params: 117,451,392        →  25,714,176
+  Reduction: 78.1%
+==============================================================
+```
 
 ## Quick Start
 
 ```python
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer("L6_uniform_distilled")
+model = SentenceTransformer("L6_uniform_distilled", trust_remote_code=True)
 
 sentences = [
-    "예약 좀 해줘",           # Korean
-    "What did I order?",     # English
-    "今日はいい天気ですね",    # Japanese
-    "Reserva una mesa",      # Spanish
+    "Hello, how are you?",
+    "안녕하세요",
+    "Bonjour, comment allez-vous?",
 ]
 
 embeddings = model.encode(sentences)
-print(embeddings.shape)  # (4, 384)
+print(embeddings.shape)  # (3, 384)
 ```
 
-## MTEB Evaluation Results
-
-**Overall Average: 56.3%**
-
-### MassiveIntentClassification
-
-**Average: 52.83%**
-
-| Language | Score |
-|----------|-------|
-| ar | 42.91% |
-| en | 63.86% |
-| es | 56.57% |
-| ko | 47.97% |
-
-### MassiveScenarioClassification
-
-**Average: 59.77%**
-
-| Language | Score |
-|----------|-------|
-| ar | 48.72% |
-| en | 71.38% |
-| es | 63.4% |
-| ko | 55.56% |
-
-
-## Distillation Impact
-
-| Task | Before Distillation | After Distillation | Delta |
-|------|--------------------|--------------------|-------|
-| MassiveIntentClassification | 52.9% | 52.83% | -0.07%p |
-| MassiveScenarioClassification | 58.2% | 59.77% | +1.57%p |
 
 
 ## Training
 
-This model was created in two stages:
-
 ### Stage 1: Layer Pruning
-1. Teacher model: `paraphrase-multilingual-MiniLM-L12-v2` (12 layers, 384 hidden dim)
-2. Selected layers: `[0, 2, 4, 7, 9, 11]` (6 layers, evenly spaced (general-purpose))
-3. Vocabulary pruning: 250K -> ~38K tokens (corpus-based, 18 target languages)
+- Teacher: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (12 layers, 384d)
+- Selected layers: `[0, 2, 4, 7, 9, 11]` (6 layers, evenly spaced (general-purpose))
+- Vocabulary pruning applied
 
 ### Stage 2: Knowledge Distillation
-- **Method**: MSE + Cosine Similarity loss between teacher and student embeddings
-- **Training data**: MASSIVE dataset (90K multilingual sentences, 18 languages)
+- **Method**: MSE + Cosine Similarity loss
+- **Data**: MTEB Classification/Clustering/STS task datasets
 - **Optimizer**: AdamW (lr=2e-5, weight_decay=0.01)
 - **Schedule**: Cosine annealing over 3 epochs
-- **Batch size**: 64
-- **Base model**: `L6_uniform` (layer-pruned only)
 
 
-## Compression Summary
+## Supported Languages (18)
 
-| Stage | Vocab | Layers | Size |
-|-------|-------|--------|------|
-| Teacher (original) | 250,002 | 12 | ~480MB |
-| + Layer pruning | 250,002 | 6 | ~407MB |
-| + Vocab pruning | ~38,330 | 6 | ~98MB |
-
-## Limitations
-
-- Vocabulary pruning restricts the model to the 18 target languages
-- Designed for short dialogue utterances, not long documents
-- Layer pruning may reduce performance on complex semantic tasks
+ko, en, ja, zh, es, fr, de, pt, it, ru, ar, hi, th, vi, id, tr, nl, pl

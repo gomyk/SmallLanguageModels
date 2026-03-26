@@ -1,143 +1,119 @@
 ---
+language: ["ko", "en", "ja", "zh", "es", "fr", "de", "pt", "it", "ru", "ar", "hi", "th", "vi", "id", "tr", "nl", "pl"]
 tags:
 - sentence-transformers
-- sentence-similarity
-- feature-extraction
-- dense
-pipeline_tag: sentence-similarity
+- multilingual
+- layer-pruning
+- vocab-pruning
+- minilm-l12
 library_name: sentence-transformers
+pipeline_tag: sentence-similarity
+license: apache-2.0
 ---
 
-# SentenceTransformer
+# L2_ends
 
-This is a [sentence-transformers](https://www.SBERT.net) model trained. It maps sentences & paragraphs to a 384-dimensional dense vector space and can be used for semantic textual similarity, semantic search, paraphrase mining, text classification, clustering, and more.
+Lightweight sentence encoder created from `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` via layer pruning + vocabulary pruning.
 
 ## Model Details
 
-### Model Description
-- **Model Type:** Sentence Transformer
-<!-- - **Base model:** [Unknown](https://huggingface.co/unknown) -->
-- **Maximum Sequence Length:** 128 tokens
-- **Output Dimensionality:** 384 dimensions
-- **Similarity Function:** Cosine Similarity
-<!-- - **Training Dataset:** Unknown -->
-<!-- - **Language:** Unknown -->
-<!-- - **License:** Unknown -->
+| Property | Value |
+|---|---|
+| Teacher | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 |
+| Architecture | MiniLM-L12 (pruned) |
+| Hidden dim | 384 |
+| Layers | 2 / 12 |
+| Layer indices | [0, 11] |
+| Strategy | 2 layers, first + last (minimal) |
+| Parameters | 99,741,312 |
+| Model size (FP32) | 71.0MB |
+| Distilled | No |
 
-### Model Sources
-
-- **Documentation:** [Sentence Transformers Documentation](https://sbert.net)
-- **Repository:** [Sentence Transformers on GitHub](https://github.com/huggingface/sentence-transformers)
-- **Hugging Face:** [Sentence Transformers on Hugging Face](https://huggingface.co/models?library=sentence-transformers)
-
-### Full Model Architecture
+## Architecture
 
 ```
-SentenceTransformer(
-  (0): Transformer({'max_seq_length': 128, 'do_lower_case': False, 'architecture': 'BertModel'})
-  (1): Pooling({'word_embedding_dimension': 384, 'pooling_mode_cls_token': False, 'pooling_mode_mean_tokens': True, 'pooling_mode_max_tokens': False, 'pooling_mode_mean_sqrt_len_tokens': False, 'pooling_mode_weightedmean_tokens': False, 'pooling_mode_lasttoken': False, 'include_prompt': True})
-)
+==============================================================
+  TEACHER: MiniLM-L12  →  STUDENT: 2L / 38,734 vocab
+==============================================================
+
+            TEACHER                        STUDENT          
+  ───────────────────────────    ───────────────────────────
+
+  ┌─────────────────────────┐    ┌─────────────────────────┐
+  │   Input Tokens          │    │   Input Tokens          │
+  └────────────┬────────────┘    └────────────┬────────────┘
+               │                              │
+  ┌────────────┴────────────┐    ┌────────────┴────────────┐
+  │  Embeddings             │    │  Embeddings (pruned)    │
+  │  vocab: 250,002         │    │  vocab:  38,734         │
+  │  dim:  384              │    │  dim:  384              │
+  └────────────┬────────────┘    └────────────┬────────────┘
+               │                              │
+  ┌─────────────────────────┐    ┌─────────────────────────┐
+  │  Layer  0               │ ──►  │  Layer  0 ← L0         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer  1               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  2               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  3               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  4               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  5               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  6               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  7               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  8               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer  9               │  ╳   │                         │
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤    │                         │
+  │  Layer 10               │  ╳   │                         │
+  ├─────────────────────────┤    ├─────────────────────────┤
+  │  Layer 11               │ ──►  │  Layer  1 ← L11        │
+  └────────────┬────────────┘    └────────────┬────────────┘
+               │                              │
+  ┌────────────┴────────────┐    ┌────────────┴────────────┐
+  │  Mean Pooling           │    │  Mean Pooling           │
+  │  → 384d embedding       │    │  → 384d embedding       │
+  └─────────────────────────┘    └─────────────────────────┘
+
+  Size: 448.0MB (FP32)           →  71.0MB (FP32)
+  Params: 117,451,392        →  18,614,400
+  Reduction: 84.2%
+==============================================================
 ```
 
-## Usage
+## Quick Start
 
-### Direct Usage (Sentence Transformers)
-
-First install the Sentence Transformers library:
-
-```bash
-pip install -U sentence-transformers
-```
-
-Then you can load this model and run inference.
 ```python
 from sentence_transformers import SentenceTransformer
 
-# Download from the 🤗 Hub
-model = SentenceTransformer("sentence_transformers_model_id")
-# Run inference
-sentences = [
-    'The weather is lovely today.',
-    "It's so sunny outside!",
-    'He drove to the stadium.',
-]
-embeddings = model.encode(sentences)
-print(embeddings.shape)
-# [3, 384]
+model = SentenceTransformer("L2_ends", trust_remote_code=True)
 
-# Get the similarity scores for the embeddings
-similarities = model.similarity(embeddings, embeddings)
-print(similarities)
-# tensor([[1.0000, 0.6999, 0.6395],
-#         [0.6999, 1.0000, 0.5479],
-#         [0.6395, 0.5479, 1.0000]])
+sentences = [
+    "Hello, how are you?",
+    "안녕하세요",
+    "Bonjour, comment allez-vous?",
+]
+
+embeddings = model.encode(sentences)
+print(embeddings.shape)  # (3, 384)
 ```
 
-<!--
-### Direct Usage (Transformers)
 
-<details><summary>Click to see the direct usage in Transformers</summary>
 
-</details>
--->
+## Training
 
-<!--
-### Downstream Usage (Sentence Transformers)
+Created via **layer pruning + vocabulary pruning** (no additional training):
 
-You can finetune this model on your own dataset.
+1. **Teacher**: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (12 layers, 384d)
+2. **Layer selection**: `[0, 11]` - 2 layers, first + last (minimal)
+3. **Vocab pruning**: Corpus-based filtering for target languages
 
-<details><summary>Click to expand</summary>
 
-</details>
--->
+## Supported Languages (18)
 
-<!--
-### Out-of-Scope Use
-
-*List how the model may foreseeably be misused and address what users ought not to do with the model.*
--->
-
-<!--
-## Bias, Risks and Limitations
-
-*What are the known or foreseeable issues stemming from this model? You could also flag here known failure cases or weaknesses of the model.*
--->
-
-<!--
-### Recommendations
-
-*What are recommendations with respect to the foreseeable issues? For example, filtering explicit content.*
--->
-
-## Training Details
-
-### Framework Versions
-- Python: 3.13.0
-- Sentence Transformers: 5.3.0
-- Transformers: 4.56.2
-- PyTorch: 2.10.0+cu128
-- Accelerate: 1.13.0
-- Datasets: 4.3.0
-- Tokenizers: 0.22.2
-
-## Citation
-
-### BibTeX
-
-<!--
-## Glossary
-
-*Clearly define terms in order to be accessible across audiences.*
--->
-
-<!--
-## Model Card Authors
-
-*Lists the people who create the model card, providing recognition and accountability for the detailed work that goes into its construction.*
--->
-
-<!--
-## Model Card Contact
-
-*Provides a way for people who have updates to the Model Card, suggestions, or questions, to contact the Model Card authors.*
--->
+ko, en, ja, zh, es, fr, de, pt, it, ru, ar, hi, th, vi, id, tr, nl, pl

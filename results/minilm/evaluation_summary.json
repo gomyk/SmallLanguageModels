@@ -1,0 +1,43 @@
+{
+  "teacher": "minilm",
+  "teacher_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "task_groups": [
+    "Classification",
+    "Clustering",
+    "STS"
+  ],
+  "tasks": [
+    "AmazonCounterfactualClassification",
+    "Banking77Classification",
+    "ImdbClassification",
+    "MTOPDomainClassification",
+    "MassiveIntentClassification",
+    "MassiveScenarioClassification",
+    "ToxicConversationsClassification",
+    "TweetSentimentExtractionClassification",
+    "ArXivHierarchicalClusteringP2P",
+    "ArXivHierarchicalClusteringS2S",
+    "BiorxivClusteringP2P.v2",
+    "MedrxivClusteringP2P.v2",
+    "MedrxivClusteringS2S.v2",
+    "StackExchangeClustering.v2",
+    "StackExchangeClusteringP2P.v2",
+    "TwentyNewsgroupsClustering.v2",
+    "BIOSSES",
+    "SICK-R",
+    "STS12",
+    "STS13",
+    "STS14",
+    "STS15",
+    "STS17",
+    "STS22.v2",
+    "STSBenchmark"
+  ],
+  "languages": null,
+  "models_evaluated": [
+    "minilm_L6_uniform",
+    "minilm_L6_uniform_distilled",
+    "minilm_L4_uniform",
+    "minilm_L4_uniform_distilled"
+  ]
+}
