@@ -44,6 +44,8 @@ from arch_utils import (
     save_as_sentence_transformer,
     detect_tokenizer_type,
     reduce_hidden_dim,
+    reduce_hidden_dim_pca,
+    reduce_hidden_dim_activation,
 )
 
 
@@ -70,8 +72,7 @@ def load_distill_corpus(max_per_lang=5000, cache_dir="data/distill_corpus"):
         "ko": "ko-KR", "en": "en-US", "ja": "ja-JP", "zh": "zh-CN",
         "es": "es-ES", "fr": "fr-FR", "de": "de-DE", "pt": "pt-PT",
         "it": "it-IT", "ru": "ru-RU", "ar": "ar-SA", "hi": "hi-IN",
-        "th": "th-TH", "vi": "vi-VN", "id": "id-ID", "tr": "tr-TR",
-        "nl": "nl-NL", "pl": "pl-PL",
+        "th": "th-TH", "vi": "vi-VN", "id": "id-ID", "pl": "pl-PL",
     }
 
     print("  Loading MASSIVE dataset...")
@@ -218,10 +219,11 @@ def create_student_for_teacher(teacher_key, experiment, max_vocab=None,
 # ── Compressed Model Creation ─────────────────────────────────
 
 def _build_and_save_model(teacher_key, layer_indices, target_hidden, target_inter,
-                          keep_ids, save_name, needs_hidden_reduction):
+                          keep_ids, save_name, needs_hidden_reduction,
+                          use_pca=False, use_activation=False, corpus_texts=None):
     """Teacher에서 압축 모델을 생성하여 저장한다 (내부 헬퍼).
 
-    Layer pruning → Hidden dim 축소 → Vocab pruning → SentenceTransformer 저장.
+    Layer pruning → Hidden dim 축소 (PCA 또는 슬라이싱) → Vocab pruning → 저장.
 
     Returns:
         (save_path, actual_vocab_size)
@@ -243,10 +245,23 @@ def _build_and_save_model(teacher_key, layer_indices, target_hidden, target_inte
 
     # Step 2: Hidden dim 축소 (필요한 경우)
     if needs_hidden_reduction:
-        student_hf = reduce_hidden_dim(
-            student_hf, target_hidden, target_inter,
-            trust_remote_code=t["trust_remote_code"],
-        )
+        if use_activation and corpus_texts:
+            student_hf = reduce_hidden_dim_activation(
+                student_hf, tokenizer, target_hidden, corpus_texts,
+                new_intermediate_size=target_inter,
+                trust_remote_code=t["trust_remote_code"],
+            )
+        elif use_pca and corpus_texts:
+            student_hf = reduce_hidden_dim_pca(
+                student_hf, tokenizer, target_hidden, corpus_texts,
+                new_intermediate_size=target_inter,
+                trust_remote_code=t["trust_remote_code"],
+            )
+        else:
+            student_hf = reduce_hidden_dim(
+                student_hf, target_hidden, target_inter,
+                trust_remote_code=t["trust_remote_code"],
+            )
 
     # Step 3: Vocab pruning
     hf_tmp = os.path.join(save_path, "_hf_pruned")
@@ -287,8 +302,9 @@ def _build_and_save_model(teacher_key, layer_indices, target_hidden, target_inte
 
 
 def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0,
-                            min_layers=4, vocab_percentile=0.90,
-                            corpus_texts=None):
+                            min_layers=4, vocab_percentile=0.95,
+                            corpus_texts=None, use_pca=False, use_activation=False,
+                            min_vocab=None):
     """크기 제약을 만족하는 압축 모델을 생성한다.
 
     Teacher/Student 파라미터 비율이 10x를 초과하면 중간 모델(~1/5 teacher)을
@@ -298,7 +314,7 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
       1. 코퍼스 기반 vocab 분석 (누적 빈도 percentile)
       2. 제약 내 최적 설정 탐색 (레이어 → hidden dim 순)
       3. Teacher/Student 비율 확인 → 10x 초과 시 중간 모델도 생성
-      4. Layer pruning → Hidden dim 축소 → Vocab pruning → 저장
+      4. Layer pruning → Hidden dim 축소 (PCA 또는 슬라이싱) → Vocab pruning → 저장
 
     Returns:
         dict with keys: final_path, intermediate_path (or None), needs_two_stage
@@ -320,35 +336,71 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
     if corpus_texts is None:
         corpus_texts = load_distill_corpus()
 
-    keep_ids = collect_corpus_tokens(
+    # 코퍼스 전체 토큰 수집 (빈도순, vocab_percentile은 상한으로만 사용)
+    keep_ids_all = collect_corpus_tokens(
         tokenizer, texts=corpus_texts, vocab_keep_ratio=vocab_percentile
     )
-    pruned_vocab_size = len(keep_ids)
-    print(f"  Vocab: {t['vocab_size']:,} → {pruned_vocab_size:,} "
-          f"({int(vocab_percentile*100)}% cumulative frequency)")
+    corpus_vocab_size = len(keep_ids_all)
 
-    # ── Phase 2: 최적 설정 탐색 ──
-    print("\n[Phase 2] Finding optimal configuration...")
+    # min_vocab floor 적용: percentile 결과보다 floor이 크면 확장
+    if min_vocab and corpus_vocab_size < min_vocab:
+        print(f"  Corpus vocab ({int(vocab_percentile*100)}% cumulative): {corpus_vocab_size:,} "
+              f"< min_vocab ({min_vocab:,}), expanding...")
+        keep_ids_all = collect_corpus_tokens(
+            tokenizer, texts=corpus_texts, max_vocab=min_vocab
+        )
+        corpus_vocab_size = len(keep_ids_all)
+
+    print(f"  Corpus vocab: {t['vocab_size']:,} → {corpus_vocab_size:,}"
+          f"{f' (min_vocab={min_vocab:,})' if min_vocab else f' ({int(vocab_percentile*100)}% cumulative)'}")
+
+    # ── Phase 2: Layer + Hidden + Vocab joint 최적화 ──
+    print("\n[Phase 2] Joint optimization (layers + hidden_dim + vocab)...")
     opt = find_optimal_config(
-        teacher_key, max_params, max_fp32_mb, min_layers, pruned_vocab_size
+        teacher_key, max_params, max_fp32_mb, min_layers,
+        corpus_vocab_size=corpus_vocab_size,
     )
 
     layer_indices = opt["layer_indices"]
     target_hidden = opt["hidden_dim"]
     target_inter = opt["intermediate_size"]
+    target_vocab = opt["target_vocab"]
 
-    est = _estimate_for_teacher(teacher_key, layer_indices, pruned_vocab_size,
+    # Vocab을 target_vocab까지만 유지 (빈도순 상위)
+    if target_vocab < corpus_vocab_size:
+        keep_ids = collect_corpus_tokens(
+            tokenizer, texts=corpus_texts, max_vocab=target_vocab
+        )
+    else:
+        keep_ids = keep_ids_all
+    actual_vocab = len(keep_ids)
+
+    # Vocab이 budget 초과 시 (특수토큰/byte토큰 강제 포함) → vocab 고정, 나머지 재조정
+    if actual_vocab > target_vocab:
+        print(f"    Vocab floor ({actual_vocab:,}) > budget ({target_vocab:,}), "
+              f"re-optimizing with fixed vocab...")
+        reopt = find_optimal_config(
+            teacher_key, max_params, max_fp32_mb, min_layers,
+            estimated_vocab_size=actual_vocab,
+        )
+        layer_indices = reopt["layer_indices"]
+        target_hidden = reopt["hidden_dim"]
+        target_inter = reopt["intermediate_size"]
+
+    est = _estimate_for_teacher(teacher_key, layer_indices, actual_vocab,
                                 hidden_dim=target_hidden, intermediate_size=target_inter)
-    print(f"  Final model config:")
+    print(f"  Optimized config:")
     print(f"    Layers: {len(layer_indices)} (indices: {layer_indices})")
     print(f"    Hidden dim: {t['hidden_dim']} → {target_hidden}")
     print(f"    Intermediate: {t['intermediate_size']} → {target_inter}")
+    print(f"    Vocab: {t['vocab_size']:,} → {actual_vocab:,} "
+          f"(budget: {target_vocab:,}, corpus: {corpus_vocab_size:,})")
     print(f"    Estimated: {est['total_params']:,} params, {est['fp32_mb']}MB FP32")
 
     meets_constraints = (est['total_params'] <= max_params
                          and est['fp32_mb'] <= max_fp32_mb)
     if not meets_constraints:
-        print(f"    (cannot fully meet constraints — maximally reduced version)")
+        print(f"    (cannot fully meet constraints - maximally reduced version)")
 
     # ── Phase 2.5: Teacher/Student 비율 확인 → 2단계 증류 필요 여부 ──
     teacher_all_layers = list(range(t["num_layers"]))
@@ -367,10 +419,11 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
 
         mid_opt = find_optimal_config(
             teacher_key, mid_target_params, mid_target_mb,
-            min_layers=min_layers, estimated_vocab_size=pruned_vocab_size,
+            min_layers=min_layers, corpus_vocab_size=actual_vocab,
         )
+        mid_vocab = mid_opt.get("target_vocab", actual_vocab)
         mid_est = _estimate_for_teacher(
-            teacher_key, mid_opt["layer_indices"], pruned_vocab_size,
+            teacher_key, mid_opt["layer_indices"], mid_vocab,
             hidden_dim=mid_opt["hidden_dim"],
             intermediate_size=mid_opt["intermediate_size"],
         )
@@ -380,7 +433,7 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
         print(f"    Intermediate: {t['intermediate_size']} → {mid_opt['intermediate_size']}")
         print(f"    Estimated: {mid_est['total_params']:,} params, {mid_est['fp32_mb']}MB FP32")
 
-        # 중간 모델 생성
+        # 중간 모델 생성 (중간 모델은 PCA 불필요 — 크기가 충분히 큼)
         print(f"\n[Phase 3a] Building intermediate model...")
         intermediate_path, _ = _build_and_save_model(
             teacher_key,
@@ -394,7 +447,9 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
 
     # ── Phase 3: 최종 모델 생성 ──
     phase_label = "3b" if needs_two_stage else "3"
-    print(f"\n[Phase {phase_label}] Building final model...")
+    method = " (Activation)" if use_activation and opt["needs_hidden_reduction"] else \
+             " (PCA)" if use_pca and opt["needs_hidden_reduction"] else ""
+    print(f"\n[Phase {phase_label}] Building final model{method}...")
     final_path, final_vocab = _build_and_save_model(
         teacher_key,
         layer_indices,
@@ -403,6 +458,9 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
         keep_ids,
         f"{teacher_key}_compressed",
         opt["needs_hidden_reduction"],
+        use_pca=use_pca,
+        use_activation=use_activation,
+        corpus_texts=corpus_texts,
     )
 
     # ── 결과 요약 ──
@@ -436,6 +494,104 @@ def create_compressed_model(teacher_key, max_params=20_000_000, max_fp32_mb=50.0
     }
 
 
+def create_explicit_compressed_model(teacher_key, hidden_dim=None, num_layers=None,
+                                     vocab_percentile=0.95, corpus_texts=None,
+                                     use_pca=False, use_activation=False,
+                                     min_vocab=None):
+    """명시적으로 지정된 hidden_dim/num_layers로 압축 모델을 생성한다.
+
+    find_optimal_config를 건너뛰고 사용자가 지정한 값을 직접 사용한다.
+    Vocab은 코퍼스 기반 pruning (미등장 토큰 제거).
+
+    Args:
+        teacher_key: TEACHERS dict의 키
+        hidden_dim: 목표 hidden dimension. None이면 원본 유지.
+        num_layers: 목표 레이어 수. None이면 원본 유지.
+        vocab_percentile: vocab 누적 빈도 유지 비율
+        corpus_texts: 코퍼스 텍스트 리스트
+        use_pca: PCA 기반 hidden dim 축소 사용 여부
+        min_vocab: vocab 최소 하한
+    """
+    from transformers import AutoTokenizer
+    from config import make_uniform_indices
+
+    t = TEACHERS[teacher_key]
+    target_hidden = hidden_dim if hidden_dim is not None else t["hidden_dim"]
+    target_layers = num_layers if num_layers is not None else t["num_layers"]
+    needs_hidden_reduction = target_hidden < t["hidden_dim"]
+
+    # Intermediate size 비례 축소
+    if needs_hidden_reduction:
+        ratio = target_hidden / t["hidden_dim"]
+        target_inter = max(64, (int(t["intermediate_size"] * ratio) // 64) * 64)
+    else:
+        target_inter = t["intermediate_size"]
+
+    layer_indices = make_uniform_indices(t["num_layers"], target_layers)
+
+    print(f"\n{'='*60}")
+    print(f"Explicit Compressed Model: {t['model_id']}")
+    print(f"  Layers: {t['num_layers']} → {target_layers} (indices: {layer_indices})")
+    print(f"  Hidden: {t['hidden_dim']} → {target_hidden}")
+    print(f"  Intermediate: {t['intermediate_size']} → {target_inter}")
+    print(f"{'='*60}")
+
+    # ── Vocab 분석 ──
+    print("\n[Phase 1] Vocab analysis...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        t["model_id"], trust_remote_code=t["trust_remote_code"]
+    )
+    if corpus_texts is None:
+        corpus_texts = load_distill_corpus()
+
+    keep_ids = collect_corpus_tokens(
+        tokenizer, texts=corpus_texts, vocab_keep_ratio=vocab_percentile
+    )
+
+    if min_vocab and len(keep_ids) < min_vocab:
+        print(f"  Expanding vocab to min_vocab={min_vocab:,}...")
+        keep_ids = collect_corpus_tokens(
+            tokenizer, texts=corpus_texts, max_vocab=min_vocab
+        )
+
+    actual_vocab = len(keep_ids)
+    print(f"  Vocab: {t['vocab_size']:,} → {actual_vocab:,}")
+
+    # ── Size 예측 ──
+    est = _estimate_for_teacher(teacher_key, layer_indices, actual_vocab,
+                                hidden_dim=target_hidden, intermediate_size=target_inter)
+    print(f"  Estimated: {est['total_params']:,} params, {est['fp32_mb']}MB FP32")
+
+    # ── 최종 모델 생성 ──
+    method = " (Activation)" if use_activation and needs_hidden_reduction else \
+             " (PCA)" if use_pca and needs_hidden_reduction else ""
+    print(f"\n[Phase 2] Building final model{method}...")
+    final_path, final_vocab = _build_and_save_model(
+        teacher_key, layer_indices, target_hidden, target_inter,
+        keep_ids, f"{teacher_key}_compressed",
+        needs_hidden_reduction, use_pca=use_pca, use_activation=use_activation,
+        corpus_texts=corpus_texts,
+    )
+
+    # ── 요약 ──
+    print(f"\n{'='*60}")
+    print(f"  COMPRESSION SUMMARY")
+    print(f"{'='*60}")
+    print(f"  Final: {final_path}")
+    print(f"    {target_layers}L / {target_hidden}d / {target_inter}i / {final_vocab:,} vocab")
+    print(f"    {est['total_params']:,} params, {est['fp32_mb']}MB FP32")
+    print(f"{'─'*60}")
+    print(f"\n  Next: python distill.py --teacher {teacher_key} "
+          f"--student {teacher_key}_compressed")
+    print(f"{'='*60}")
+
+    return {
+        "final_path": final_path,
+        "intermediate_path": None,
+        "needs_two_stage": False,
+    }
+
+
 # ── Main ──────────────────────────────────────────────────────
 
 def main():
@@ -462,8 +618,23 @@ def main():
                         help="최대 FP32 모델 크기 MB (기본: 50)")
     parser.add_argument("--min-layers", type=int, default=4,
                         help="최소 레이어 수 (기본: 4)")
-    parser.add_argument("--vocab-percentile", type=float, default=0.90,
-                        help="Vocab 누적 빈도 유지 비율 (기본: 0.90 = 90%%)")
+    parser.add_argument("--vocab-percentile", type=float, default=0.95,
+                        help="Vocab 누적 빈도 유지 비율 (기본: 0.95 = 95%%)")
+    parser.add_argument("--min-vocab", type=int, default=None,
+                        help="Vocab 최소 하한 (예: 90000). 95%% 기준보다 이 값이 "
+                             "크면 vocab을 이 값까지 유지. 미지정 시 제한 없음.")
+    parser.add_argument("--pca", action="store_true",
+                        help="Hidden dim 축소 시 PCA 기반 projection 사용 "
+                             "(코퍼스 hidden states에서 최적 방향 계산)")
+    parser.add_argument("--activation", action="store_true",
+                        help="Hidden dim 축소 시 활성화 기반 차원 선별 사용 "
+                             "(코퍼스에서 중요도가 높은 차원만 유지)")
+    parser.add_argument("--hidden-dim", type=int, default=None,
+                        help="명시적 hidden dimension (예: 384). "
+                             "지정 시 자동 최적화 대신 이 값을 사용")
+    parser.add_argument("--num-layers", type=int, default=None,
+                        help="명시적 레이어 수 (예: 6). "
+                             "지정 시 자동 최적화 대신 이 값을 사용")
 
     args = parser.parse_args()
 
@@ -476,14 +647,30 @@ def main():
         corpus_texts = load_distill_corpus()
         print()
 
-        create_compressed_model(
-            args.teacher,
-            max_params=args.max_params,
-            max_fp32_mb=args.max_mb,
-            min_layers=args.min_layers,
-            vocab_percentile=args.vocab_percentile,
-            corpus_texts=corpus_texts,
-        )
+        # --hidden-dim / --num-layers 명시 시: 자동 최적화 건너뛰고 직접 빌드
+        if args.hidden_dim is not None or args.num_layers is not None:
+            create_explicit_compressed_model(
+                args.teacher,
+                hidden_dim=args.hidden_dim,
+                num_layers=args.num_layers,
+                vocab_percentile=args.vocab_percentile,
+                corpus_texts=corpus_texts,
+                use_pca=args.pca,
+                use_activation=args.activation,
+                min_vocab=args.min_vocab,
+            )
+        else:
+            create_compressed_model(
+                args.teacher,
+                max_params=args.max_params,
+                max_fp32_mb=args.max_mb,
+                min_layers=args.min_layers,
+                vocab_percentile=args.vocab_percentile,
+                corpus_texts=corpus_texts,
+                use_pca=args.pca,
+                use_activation=args.activation,
+                min_vocab=args.min_vocab,
+            )
         print("\nDone!")
         print("Next step: python distill.py --teacher <teacher_key> --student <name>_compressed")
         return

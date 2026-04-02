@@ -26,11 +26,26 @@ from arch_utils import generate_architecture_diagram
 
 
 def load_mteb_scores(model_name, results_dir):
-    """MTEB 결과에서 모델의 점수를 로드한다 (모든 태스크 지원)."""
+    """MTEB 결과에서 모델의 점수를 로드한다 (모든 태스크 지원).
+
+    model_name과 정확히 일치하는 디렉토리가 없으면,
+    results_dir 하위에서 model_name을 포함하는 디렉토리를 찾는다.
+    (예: "L6_uniform" → "minilm_L6_uniform" fallback)
+    """
     model_dir = os.path.join(results_dir, model_name)
     scores = {}
     if not os.path.isdir(model_dir):
-        return scores
+        # Fallback: teacher prefix가 붙은 이름으로 검색
+        parent = results_dir
+        if os.path.isdir(parent):
+            for d in os.listdir(parent):
+                if d.endswith(model_name) and os.path.isdir(os.path.join(parent, d)):
+                    model_dir = os.path.join(parent, d)
+                    break
+            else:
+                return scores
+        else:
+            return scores
 
     for fpath in _glob.glob(os.path.join(model_dir, "**", "*.json"), recursive=True):
         fname = os.path.basename(fpath)
@@ -394,6 +409,17 @@ Created via **multi-method model compression** (no additional training):
     two_stage_tag = "- progressive-distillation\n" if two_stage else ""
     title_suffix = " (Distilled)" if is_distilled else ""
 
+    # 라이센스 처리 (Gemma 등 특수 라이센스 지원)
+    license_id = t.get("license", "apache-2.0")
+    license_notice = t.get("license_notice", "")
+    license_section = ""
+    if license_notice:
+        license_section = f"""## License
+
+{license_notice}
+
+"""
+
     card = f"""---
 language: {json.dumps(TARGET_LANGUAGES)}
 tags:
@@ -405,7 +431,7 @@ tags:
 {distill_tag}{two_stage_tag}- {t['short_name'].lower().replace(' ', '-')}
 library_name: sentence-transformers
 pipeline_tag: sentence-similarity
-license: apache-2.0
+license: {license_id}
 ---
 
 # {name}{title_suffix}
@@ -448,7 +474,7 @@ print(embeddings.shape)  # (4, {hidden_dim})
 {mteb_table}
 {distill_comparison}
 {training_section}
-
+{license_section}
 ## Supported Languages ({len(TARGET_LANGUAGES)})
 
 {', '.join(TARGET_LANGUAGES)}
@@ -504,12 +530,21 @@ def main():
     if args.only:
         experiments = [e for e in experiments if e["name"] in args.only]
 
+    def _find_student_path(name):
+        """Student 경로를 찾는다. teacher prefix 붙은 이름도 검색."""
+        for candidate in [
+            os.path.join(students_dir, name),
+            os.path.join(STUDENTS_DIR, name),
+            os.path.join(students_dir, f"{teacher_key}_{name}"),
+        ]:
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
     for exp in experiments:
         base_name = exp["name"]
-        base_path = os.path.join(students_dir, base_name)
-        if not os.path.exists(base_path):
-            base_path = os.path.join(STUDENTS_DIR, base_name)
-        if os.path.exists(base_path):
+        base_path = _find_student_path(base_name)
+        if base_path:
             upload_targets.append({
                 "name": base_name, "path": base_path,
                 "is_distilled": False, "exp": exp, "compressed": False,
@@ -546,6 +581,23 @@ def main():
     # --only 필터 적용
     if args.only:
         upload_targets = [t for t in upload_targets if t["name"] in args.only]
+
+    # --only에 지정되었지만 목록에 없는 모델은 디렉토리에서 직접 탐색
+    if args.only:
+        found_names = {t["name"] for t in upload_targets}
+        for name in args.only:
+            if name in found_names:
+                continue
+            for base_dir in [students_dir, STUDENTS_DIR]:
+                path = os.path.join(base_dir, name)
+                if os.path.exists(path):
+                    is_distilled = "_distilled" in name
+                    upload_targets.append({
+                        "name": name, "path": path,
+                        "is_distilled": is_distilled, "exp": None,
+                        "compressed": True,
+                    })
+                    break
 
     if not upload_targets:
         print("No models to upload.")

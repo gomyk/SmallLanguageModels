@@ -22,6 +22,7 @@ import argparse
 import os
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,6 +37,70 @@ from config import (
     generate_experiments, get_teacher_students_dir,
     _estimate_for_teacher,
 )
+
+
+# ── AutoModel Teacher Wrapper ────────────────────────────────
+
+class AutoModelTeacher:
+    """AutoModel 기반 teacher wrapper (SentenceTransformer 비호환 모델용).
+
+    jina-v5 등 PEFT/custom 모델은 SentenceTransformer로 직접 로드가 어려울 수 있다.
+    이 경우 AutoModel로 로드하고 모델 내장 encode()를 사용한다.
+    """
+
+    def __init__(self, model, device="cpu"):
+        self.model = model
+        self._device = device
+        self._dim = getattr(model.config, 'hidden_size', 768)
+
+    def encode(self, texts, convert_to_tensor=True, show_progress_bar=False,
+               device=None, **kwargs):
+        target_device = device or self._device
+        with torch.no_grad():
+            emb = self.model.encode(texts)
+        if isinstance(emb, np.ndarray):
+            emb = torch.from_numpy(emb)
+        if not isinstance(emb, torch.Tensor):
+            emb = torch.tensor(emb)
+        if convert_to_tensor:
+            return emb.to(target_device)
+        return emb
+
+    def eval(self):
+        self.model.eval()
+        return self
+
+    def parameters(self):
+        return self.model.parameters()
+
+    def get_sentence_embedding_dimension(self):
+        return self._dim
+
+
+def load_teacher(teacher_name, device="cpu", trust_remote_code=False,
+                 model_kwargs=None):
+    """Teacher 모델을 로드한다. SentenceTransformer 우선, AutoModel fallback."""
+    # 1차: SentenceTransformer로 로드 시도
+    try:
+        teacher = SentenceTransformer(teacher_name, device=device,
+                                       trust_remote_code=trust_remote_code,
+                                       model_kwargs=model_kwargs or {})
+        teacher.eval()
+        print(f"  Teacher loaded as SentenceTransformer")
+        return teacher
+    except Exception as e:
+        print(f"  SentenceTransformer load failed: {e}")
+
+    # 2차: AutoModel로 로드 (PEFT/custom 모델용)
+    print(f"  Falling back to AutoModel (custom model)...")
+    from transformers import AutoModel
+    model = AutoModel.from_pretrained(teacher_name, trust_remote_code=True)
+    model.to(device)
+    model.eval()
+    teacher = AutoModelTeacher(model, device=device)
+    dim = teacher.get_sentence_embedding_dimension()
+    print(f"  Teacher loaded as AutoModel (dim={dim})")
+    return teacher
 
 
 # ── 학습 데이터 ───────────────────────────────────────────────
@@ -151,20 +216,32 @@ def distill_student(
     mse_weight=1.0,
     suffix="_distilled",
     trust_remote_code=False,
+    patience=3,
 ):
-    """Teacher의 embedding을 student가 재현하도록 distillation 학습."""
+    """Teacher의 embedding을 student가 재현하도록 distillation 학습.
+
+    Early stopping: patience epoch 동안 loss가 개선되지 않으면 조기 종료.
+    """
 
     print(f"\n{'='*60}")
     print(f"Distilling: {os.path.basename(student_path)}")
     print(f"  Teacher: {teacher_name}")
     print(f"  Epochs: {epochs}, Batch: {batch_size}, LR: {lr}")
     print(f"  Loss weights: MSE={mse_weight}, Cosine={cos_weight}")
+    print(f"  Early stopping: patience={patience}")
     print(f"  Device: {device}")
     print(f"{'='*60}")
 
     # Teacher 로드 (frozen)
-    teacher = SentenceTransformer(teacher_name, device=device,
-                                   trust_remote_code=trust_remote_code)
+    # TEACHERS config에서 model_kwargs 가져오기 (task 지정 등)
+    _teacher_kwargs = {}
+    for _tk, _tv in TEACHERS.items():
+        if _tv["model_id"] == teacher_name:
+            _teacher_kwargs = _tv.get("model_kwargs", {})
+            break
+    teacher = load_teacher(teacher_name, device=device,
+                           trust_remote_code=trust_remote_code,
+                           model_kwargs=_teacher_kwargs)
     teacher.eval()
     for param in teacher.parameters():
         param.requires_grad = False
@@ -187,6 +264,7 @@ def distill_student(
 
     # Training loop
     best_loss = float("inf")
+    no_improve_count = 0
     loss_fn = nn.MSELoss()
 
     tokenizer = student.tokenizer
@@ -196,10 +274,27 @@ def distill_student(
     # Teacher/Student 차원이 다를 때 학습 가능한 projection layer 추가
     teacher_dim = teacher.get_sentence_embedding_dimension()
     student_dim = student.get_sentence_embedding_dimension()
+    # Matryoshka 등 dim이 None인 경우 실제 encode로 추정
+    if teacher_dim is None:
+        with torch.no_grad():
+            sample = teacher.encode(["test"], convert_to_tensor=True, device=device)
+            teacher_dim = sample.shape[-1]
+            print(f"  Teacher dim inferred from encode: {teacher_dim}")
+    if student_dim is None:
+        with torch.no_grad():
+            sample = student.encode(["test"], convert_to_tensor=True, device=device)
+            student_dim = sample.shape[-1]
+            print(f"  Student dim inferred from encode: {student_dim}")
     proj = None
     if student_dim != teacher_dim:
         proj = nn.Linear(student_dim, teacher_dim).to(device)
-        print(f"  Projection: {student_dim}d → {teacher_dim}d (learnable)")
+        # 이전 distillation에서 저장된 projection이 있으면 로드
+        proj_path = os.path.join(student_path + suffix, "proj.pt")
+        if os.path.exists(proj_path):
+            proj.load_state_dict(torch.load(proj_path, map_location=device, weights_only=True))
+            print(f"  Projection: {student_dim}d → {teacher_dim}d (resumed from {proj_path})")
+        else:
+            print(f"  Projection: {student_dim}d → {teacher_dim}d (new)")
         optimizer = torch.optim.AdamW(
             list(student.parameters()) + list(proj.parameters()),
             lr=lr, weight_decay=0.01,
@@ -212,25 +307,29 @@ def distill_student(
         if proj:
             proj.train()
 
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}")
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}",
+                    disable=os.environ.get("TQDM_DISABLE", "") == "1")
         for batch_texts in pbar:
-            # Teacher forward (no grad)
-            with torch.no_grad():
-                teacher_embeddings = teacher.encode(
-                    list(batch_texts),
-                    convert_to_tensor=True,
-                    show_progress_bar=False,
-                    device=device,
-                ).clone()
+            try:
+                # Teacher forward (no grad)
+                with torch.no_grad():
+                    teacher_embeddings = teacher.encode(
+                        list(batch_texts),
+                        convert_to_tensor=True,
+                        show_progress_bar=False,
+                        device=device,
+                    ).clone()
 
-            # Student forward
-            encoded = tokenizer(
-                list(batch_texts),
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-                return_tensors="pt",
-            ).to(device)
+                # Student forward
+                encoded = tokenizer(
+                    list(batch_texts),
+                    padding=True,
+                    truncation=True,
+                    max_length=max_length,
+                    return_tensors="pt",
+                ).to(device)
+            except Exception:
+                continue  # 인코딩 실패 배치 스킵
 
             model_output = student_transformer(**encoded)
             token_emb = model_output[0]
@@ -260,6 +359,7 @@ def distill_student(
 
         if avg_loss < best_loss:
             best_loss = avg_loss
+            no_improve_count = 0
             distilled_path = student_path + suffix
             os.makedirs(distilled_path, exist_ok=True)
             student_transformer.save_pretrained(distilled_path)
@@ -276,9 +376,19 @@ def distill_student(
                                            pooling_mode_mean_tokens=True)
             st_model = SentenceTransformer(modules=[word_model, pool_model])
             st_model.save(distilled_path)
+            # Projection layer도 저장 (재개 시 로드용)
+            if proj:
+                torch.save(proj.state_dict(), os.path.join(distilled_path, "proj.pt"))
             print(f"  Saved best model to {distilled_path} (loss={best_loss:.4f})")
+        else:
+            no_improve_count += 1
+            print(f"  No improvement ({no_improve_count}/{patience})")
+            if no_improve_count >= patience:
+                print(f"  Early stopping at epoch {epoch+1}")
+                break
 
-    print(f"Distillation complete. Best loss: {best_loss:.4f}")
+    print(f"Distillation complete. Best loss: {best_loss:.4f} "
+          f"(stopped at epoch {epoch+1}/{epochs})")
     return student
 
 
@@ -294,6 +404,7 @@ def distill_two_stage(
     cos_weight=0.5,
     mse_weight=1.0,
     device="cpu",
+    patience=3,
 ):
     """2단계 증류: Teacher → Intermediate → Final Student.
 
@@ -347,6 +458,7 @@ def distill_two_stage(
         suffix="_distilled",
         device=device,
         trust_remote_code=t["trust_remote_code"],
+        patience=patience,
     )
     stage1_time = time.time() - start
     print(f"  Stage 1 time: {stage1_time/60:.1f} min")
@@ -372,7 +484,8 @@ def distill_two_stage(
         mse_weight=mse_weight,
         suffix="_distilled",
         device=device,
-        trust_remote_code=True,  # distilled 모델은 항상 local
+        trust_remote_code=True,
+        patience=patience,
     )
     stage2_time = time.time() - start
     print(f"  Stage 2 time: {stage2_time/60:.1f} min")
@@ -397,7 +510,10 @@ def main():
     parser.add_argument("--two-stage", action="store_true",
                         help="2단계 증류: Teacher → Intermediate → Student "
                              "(teacher 대비 10x+ 압축 시 사용)")
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=10,
+                        help="최대 epoch 수 (기본: 10, early stopping과 함께 사용)")
+    parser.add_argument("--patience", type=int, default=3,
+                        help="Early stopping patience (기본: 3)")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--cos-weight", type=float, default=0.5)
@@ -406,6 +522,8 @@ def main():
     parser.add_argument("--max-per-dataset", type=int, default=10000,
                         help="데이터셋당 최대 텍스트 수")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--max-vram-frac", type=float, default=None,
+                        help="GPU VRAM 사용 비율 제한 (0.0~1.0, 예: 0.5 = 50%%)")
     args = parser.parse_args()
 
     # Teacher 결정
@@ -418,6 +536,10 @@ def main():
     device = args.device
     if device == "cpu" and torch.cuda.is_available():
         device = "cuda"
+        # VRAM 사용량 제한 (기본: 전체의 50%)
+        if args.max_vram_frac:
+            torch.cuda.set_per_process_memory_fraction(args.max_vram_frac)
+            print(f"CUDA VRAM limit: {args.max_vram_frac*100:.0f}%")
         print(f"CUDA available, using GPU: {torch.cuda.get_device_name(0)}")
 
     # 학습 데이터 로드 (MTEB 태스크 데이터셋)
@@ -469,6 +591,7 @@ def main():
                 cos_weight=args.cos_weight,
                 mse_weight=args.mse_weight,
                 device=device,
+                patience=args.patience,
             )
         else:
             student_path = os.path.join(students_dir, student_name)
@@ -490,6 +613,7 @@ def main():
                 suffix=args.suffix,
                 device=device,
                 trust_remote_code=trust_remote_code,
+                patience=args.patience,
             )
 
         elapsed = time.time() - start

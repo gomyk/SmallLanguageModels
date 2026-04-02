@@ -62,6 +62,30 @@ TEACHERS = {
         "tokenizer_type": "unigram",
         "trust_remote_code": False,
     },
+    "gemma_emb": {
+        "model_id": "google/embeddinggemma-300m",
+        "short_name": "EmbeddingGemma-300M",
+        "hidden_dim": 768,
+        "num_layers": 24,
+        "intermediate_size": 1152,
+        "vocab_size": 262144,
+        "layer_accessor": "layers",
+        "tokenizer_type": "unigram",
+        "trust_remote_code": False,
+        "num_attention_heads": 3,
+        "num_kv_heads": 1,
+        "head_dim": 256,
+        "has_glu": True,
+        "is_decoder": True,
+        "license": "gemma",
+        "license_notice": (
+            "This model is a derivative of Google's Gemma. "
+            "Gemma is provided under and subject to the Gemma Terms of Use "
+            "found at [ai.google.dev/gemma/terms](https://ai.google.dev/gemma/terms). "
+            "Use of this model must comply with the "
+            "[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy)."
+        ),
+    },
     "qwen3": {
         "model_id": "Qwen/Qwen3-0.6B",
         "short_name": "Qwen3-0.6B",
@@ -77,6 +101,39 @@ TEACHERS = {
         "head_dim": 128,
         "has_glu": True,
         "is_decoder": True,
+    },
+    "mmbert": {
+        "model_id": "jhu-clsp/mmBERT-small",
+        "short_name": "mmBERT-small",
+        "hidden_dim": 384,
+        "num_layers": 22,
+        "intermediate_size": 1152,
+        "vocab_size": 256000,
+        "layer_accessor": "layers",
+        "tokenizer_type": "bpe",
+        "trust_remote_code": True,
+    },
+    "jina_v5": {
+        "model_id": "jinaai/jina-embeddings-v5-text-nano",
+        "short_name": "Jina-v5-nano",
+        "hidden_dim": 768,
+        "num_layers": 12,
+        "intermediate_size": 3072,
+        "vocab_size": 128256,
+        "layer_accessor": "layers",
+        "tokenizer_type": "bpe",
+        "trust_remote_code": True,
+        "has_glu": True,
+        "is_decoder": True,  # RoPE 사용, position/token_type embedding 없음
+        "is_peft_model": True,  # PeftMixedModel → EuroBertModel 추출 필요
+        "model_kwargs": {"default_task": "text-matching"},
+        "license": "cc-by-nc-4.0",
+        "license_notice": (
+            "This model is a derivative of Jina AI's jina-embeddings-v5-text-nano. "
+            "The original model is provided under CC BY-NC 4.0 license. "
+            "See [jina-embeddings-v5-text-nano](https://huggingface.co/jinaai/jina-embeddings-v5-text-nano) "
+            "for details."
+        ),
     },
 }
 
@@ -267,44 +324,43 @@ def get_mteb_task_groups(exclude=None):
 QUICK_EVAL_LANGS = ["eng", "kor", "zho", "spa", "ara"]
 
 
-# ── Target Languages (18개) ───────────────────────────────────
+# ── Target Languages (16개) ───────────────────────────────────
 TARGET_LANGUAGES = [
     "ko", "en", "ja", "zh", "es", "fr", "de", "pt",
-    "it", "ru", "ar", "hi", "th", "vi", "id", "tr", "nl", "pl",
+    "it", "ru", "ar", "hi", "th", "vi", "id", "pl",
 ]
 
 LANG_TO_ISO3 = {
     "ko": "kor", "en": "eng", "ja": "jpn", "zh": "zho",
     "es": "spa", "fr": "fra", "de": "deu", "pt": "por",
     "it": "ita", "ru": "rus", "ar": "ara", "hi": "hin",
-    "th": "tha", "vi": "vie", "id": "ind", "tr": "tur",
-    "nl": "nld", "pl": "pol",
+    "th": "tha", "vi": "vie", "id": "ind", "pl": "pol",
 }
 
 
 # ── Distillation Data Sources ─────────────────────────────────
 # MTEB 태스크 데이터셋에서 텍스트를 추출하여 distillation 학습에 사용
 DISTILL_DATASETS = {
-    # Classification datasets
+    # Classification datasets (train only — test는 MTEB 평가용)
     "amazon_counterfactual": {
         "hf_id": "mteb/amazon_counterfactual",
         "text_fields": ["text"],
-        "splits": ["train", "test"],
+        "splits": ["train"],
     },
     "banking77": {
         "hf_id": "mteb/banking77",
         "text_fields": ["text"],
-        "splits": ["train", "test"],
+        "splits": ["train"],
     },
     "imdb": {
         "hf_id": "mteb/imdb",
         "text_fields": ["text"],
-        "splits": ["train", "test"],
+        "splits": ["train"],
     },
     "mtop_domain": {
         "hf_id": "mteb/mtop_domain",
         "text_fields": ["text"],
-        "splits": ["train", "test"],
+        "splits": ["train"],
     },
     "massive_intent": {
         "hf_id": "mteb/amazon_massive_intent",
@@ -321,23 +377,29 @@ DISTILL_DATASETS = {
     "toxic_conversations": {
         "hf_id": "mteb/toxic_conversations_50k",
         "text_fields": ["text"],
-        "splits": ["test"],
+        "splits": ["train"],
     },
     "tweet_sentiment": {
         "hf_id": "mteb/tweet_sentiment_extraction",
         "text_fields": ["text"],
-        "splits": ["train", "test"],
+        "splits": ["train"],
     },
-    # STS datasets (sentence pairs)
+    # STS datasets (train only)
     "stsb": {
         "hf_id": "mteb/stsbenchmark-sts",
         "text_fields": ["sentence1", "sentence2"],
-        "splits": ["train", "test"],
+        "splits": ["train"],
     },
-    "sickr": {
-        "hf_id": "mteb/SICK-R",
-        "text_fields": ["sentence1", "sentence2"],
-        "splits": ["test"],
+    # Large-scale NLI datasets (for bigger distillation corpus)
+    "snli": {
+        "hf_id": "stanfordnlp/snli",
+        "text_fields": ["premise", "hypothesis"],
+        "splits": ["train"],
+    },
+    "multi_nli": {
+        "hf_id": "nyu-mll/multi_nli",
+        "text_fields": ["premise", "hypothesis"],
+        "splits": ["train"],
     },
 }
 
@@ -430,9 +492,9 @@ def _estimate_for_teacher(teacher_key, layer_indices, vocab_size=None,
     Hidden dim이 축소된 경우 num_heads, num_kv_heads, head_dim도 비례 조정한다.
     """
     t = TEACHERS[teacher_key]
-    h = hidden_dim or t["hidden_dim"]
-    inter = intermediate_size or t["intermediate_size"]
-    v = vocab_size or t["vocab_size"]
+    h = hidden_dim if hidden_dim is not None else t["hidden_dim"]
+    inter = intermediate_size if intermediate_size is not None else t["intermediate_size"]
+    v = vocab_size if vocab_size is not None else t["vocab_size"]
 
     n_heads = t.get("num_attention_heads")
     n_kv = t.get("num_kv_heads")
@@ -505,71 +567,94 @@ def calculate_target_vocab(hidden_dim, num_layers, intermediate_size=None,
 
 
 def find_optimal_config(teacher_key, max_params=20_000_000, max_fp32_mb=50.0,
-                        min_layers=4, estimated_vocab_size=None):
+                        min_layers=4, estimated_vocab_size=None,
+                        corpus_vocab_size=None):
     """크기 제약을 만족하는 최적 모델 설정을 탐색한다.
 
-    탐색 순서:
-      1. 레이어 수 축소 (teacher layers → min_layers)
-      2. Hidden dimension 축소 (64 단위)
+    Layer, hidden dim, vocab size를 joint 최적화한다.
+    우선순위: hidden dim 보존 > 레이어 수 > vocab 크기.
+
+    전략:
+      1. 각 레이어 수 (teacher → min_layers)에 대해:
+         a. 원본 hidden dim을 유지할 수 있는지 확인
+         b. 가능하면 남은 예산으로 vocab 최대화
+         c. 불가능하면 hidden dim 축소 후 vocab 최대화
+      2. hidden dim × num_layers가 가장 큰 설정 선택 (품질 우선)
 
     Args:
         teacher_key: TEACHERS dict의 키
         max_params: 최대 파라미터 수
         max_fp32_mb: 최대 FP32 모델 크기 (MB)
         min_layers: 최소 레이어 수
-        estimated_vocab_size: vocab pruning 후 예상 크기. None이면 원본 사용.
+        estimated_vocab_size: vocab 상한 (None이면 corpus_vocab_size 또는 원본 사용)
+        corpus_vocab_size: 코퍼스에 등장한 전체 토큰 수 (vocab 상한으로 사용)
 
     Returns:
-        dict with layer_indices, hidden_dim, intermediate_size, needs_hidden_reduction
+        dict with layer_indices, hidden_dim, intermediate_size,
+              target_vocab, needs_hidden_reduction
     """
     t = TEACHERS[teacher_key]
 
-    # 두 제약 중 더 엄격한 것 적용
     param_limit_from_mb = int(max_fp32_mb * 1024 * 1024 / 4)
     effective_max = min(max_params, param_limit_from_mb)
 
     hidden_dim = t["hidden_dim"]
     inter_size = t["intermediate_size"]
 
-    if estimated_vocab_size is None:
-        estimated_vocab_size = t["vocab_size"]
+    # Vocab 상한: 코퍼스에 등장한 토큰 수 또는 명시적 값
+    vocab_cap = estimated_vocab_size or corpus_vocab_size or t["vocab_size"]
 
-    # 1단계: 레이어 수 축소 (많은 쪽 → min_layers)
-    for n_layers in range(t["num_layers"], min_layers - 1, -1):
-        indices = make_uniform_indices(t["num_layers"], n_layers)
-        s = _estimate_for_teacher(teacher_key, indices, estimated_vocab_size)
-        if s["total_params"] <= effective_max:
-            return {
-                "layer_indices": indices,
-                "hidden_dim": hidden_dim,
-                "intermediate_size": inter_size,
-                "needs_hidden_reduction": False,
-            }
+    # vocab 하한: estimated가 있으면 그 값 (강제 토큰 등으로 줄일 수 없는 경우)
+    vocab_floor = estimated_vocab_size if estimated_vocab_size else 3000
 
-    # 2단계: min_layers에서도 초과 → hidden dim 축소
+    def _calc_vocab_budget(teacher_key, layer_indices, h, inter):
+        """주어진 layer/hidden 설정에서 남은 예산으로 vocab 최대화."""
+        s_zero = _estimate_for_teacher(teacher_key, layer_indices, 0,
+                                       hidden_dim=h, intermediate_size=inter)
+        remaining = effective_max - s_zero["total_params"]
+        max_v = int(remaining / h) if h > 0 else 0
+        return min(max(max_v, 0), vocab_cap)
+
+    # 우선순위: hidden_dim 보존 > vocab 최대화 > 레이어 수 (min 유지)
+    # min_layers부터 위로 올려가며 원본 hidden_dim 유지 가능한지 확인
     indices = make_uniform_indices(t["num_layers"], min_layers)
 
-    # Binary search: 제약을 만족하는 최대 hidden_dim (64의 배수)
+    # 1단계: min_layers에서 원본 hidden dim 유지 가능?
+    v_budget = _calc_vocab_budget(teacher_key, indices, hidden_dim, inter_size)
+    if v_budget >= vocab_floor:
+        return {
+            "layer_indices": indices,
+            "hidden_dim": hidden_dim,
+            "intermediate_size": inter_size,
+            "target_vocab": v_budget,
+            "needs_hidden_reduction": False,
+        }
+
+    # 2단계: min_layers에서 hidden dim 축소 + vocab 최대화
+    # Binary search: vocab >= vocab_floor 을 보장하면서 최대 hidden_dim
     lo, hi = 64, hidden_dim - 64
-    best = 64
+    best_h = 64
     while lo <= hi:
         mid = ((lo + hi) // 2 // 64) * 64
         if mid < 64:
             mid = 64
         ratio = mid / hidden_dim
         scaled_inter = max(64, (int(inter_size * ratio) // 64) * 64)
-        s = _estimate_for_teacher(teacher_key, indices, estimated_vocab_size,
-                                  hidden_dim=mid, intermediate_size=scaled_inter)
-        if s["total_params"] <= effective_max:
-            best = mid
+        v_budget = _calc_vocab_budget(teacher_key, indices, mid, scaled_inter)
+        if v_budget >= vocab_floor:
+            best_h = mid
             lo = mid + 64
         else:
             hi = mid - 64
 
-    best_inter = max(64, (int(inter_size * best / hidden_dim) // 64) * 64)
+    best_ratio = best_h / hidden_dim
+    best_inter = max(64, (int(inter_size * best_ratio) // 64) * 64)
+    v_budget = _calc_vocab_budget(teacher_key, indices, best_h, best_inter)
+
     return {
         "layer_indices": indices,
-        "hidden_dim": best,
+        "hidden_dim": best_h,
         "intermediate_size": best_inter,
-        "needs_hidden_reduction": True,
+        "target_vocab": max(v_budget, vocab_floor),
+        "needs_hidden_reduction": best_h < hidden_dim,
     }

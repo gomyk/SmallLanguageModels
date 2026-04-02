@@ -129,6 +129,8 @@ def main():
                         help="Teacher도 평가 (베이스라인)")
     parser.add_argument("--languages", nargs="+", default=None,
                         help="특정 언어만 평가 (ISO 639-3)")
+    parser.add_argument("--max-vram-frac", type=float, default=None,
+                        help="GPU VRAM 사용 비율 제한 (0.0~1.0)")
     args = parser.parse_args()
 
     # 평가할 태스크 그룹 수집 (exclude 적용)
@@ -216,6 +218,11 @@ def main():
     print(f"\nModels to evaluate: {len(models_to_eval)}")
     for m in models_to_eval:
         print(f"  - {m['name']}")
+
+    # VRAM 제한 (다른 작업과 공유 시)
+    if torch.cuda.is_available() and args.max_vram_frac:
+        torch.cuda.set_per_process_memory_fraction(args.max_vram_frac)
+        print(f"VRAM limit: {args.max_vram_frac*100:.0f}%")
 
     # 모델별 순차 평가 (하나 로드 → 전체 태스크 평가 → 해제)
     for model_info in models_to_eval:
