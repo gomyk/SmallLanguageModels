@@ -83,9 +83,14 @@ class UnigramTokenizer private constructor(
 
     // ── Normalize ──────────────────────────────────────────
 
-    /** 연속 공백을 단일 공백으로 치환 */
+    /**
+     * SentencePiece Precompiled normalizer:
+     * 제어 문자, 탭, 개행 등을 공백으로 치환하고 연속 공백을 단일 공백으로 축소.
+     */
     private fun normalize(text: String): String {
-        return text.replace(Regex(" {2,}"), " ")
+        return text
+            .replace(Regex("[\t\n\r\\x0b\\x0c\u00a0\u2000-\u200b\u2028\u2029\u3000\ufeff]"), " ")
+            .replace(Regex(" {2,}"), " ")
     }
 
     // ── Pre-tokenize (Metaspace) ───────────────────────────
@@ -206,6 +211,9 @@ class UnigramTokenizer private constructor(
      */
     fun encode(text: String): Encoded {
         val normalized = normalize(text)
+        if (normalized.isEmpty()) {
+            return Encoded(intArrayOf(clsId, sepId), intArrayOf(1, 1))
+        }
         val preTokenized = preTokenize(normalized)
         val tokenIds = tokenize(preTokenized)
 
