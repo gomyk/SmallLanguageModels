@@ -93,7 +93,12 @@ class BpeTokenizer private constructor(
             val merges = mutableListOf<Pair<String, String>>()
             val mergeRanks = mutableMapOf<Pair<String, String>, Int>()
             for (i in 0 until mergesJson.length()) {
-                val parts = mergesJson.getString(i).split(" ", limit = 2)
+                val entry = mergesJson.get(i)
+                val parts: List<String> = when (entry) {
+                    is String -> entry.split(" ", limit = 2)
+                    is org.json.JSONArray -> listOf(entry.getString(0), entry.getString(1))
+                    else -> continue
+                }
                 if (parts.size == 2) {
                     val pair = parts[0] to parts[1]
                     merges.add(pair)

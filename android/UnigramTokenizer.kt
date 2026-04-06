@@ -145,9 +145,9 @@ class UnigramTokenizer private constructor(
      *   text = "▁Hello"
      *   모든 위치 i에 대해, 가장 높은 확률로 text[0..i]를 분할하는 방법을 DP로 계산.
      *
-     *   score[i] = max over j<i of { score[j] + log_prob(text[j..i]) }
+     *   score(i) = max over j < i of { score(j) + log_prob(text(j..i)) }
      *
-     *   text[j..i]가 vocab에 있으면 해당 log_prob 사용,
+     *   text(j..i)가 vocab에 있으면 해당 log_prob 사용,
      *   없으면 skip (single char일 때만 UNK로 fallback).
      *
      * 예시: "▁Hello"
