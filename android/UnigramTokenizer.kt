@@ -85,12 +85,37 @@ class UnigramTokenizer private constructor(
 
     /**
      * SentencePiece Precompiled normalizer:
-     * 제어 문자, 탭, 개행 등을 공백으로 치환하고 연속 공백을 단일 공백으로 축소.
+     * 1. NFKC 정규화 (ligatures, fullwidth, math symbols, combining chars → canonical)
+     *    Hangul Compatibility Jamo (U+3131-U+318E)는 PUA로 보호 후 복원
+     * 2. 제어 문자 → 공백 (U+0000은 유지 → UNK 처리)
+     * 3. 연속 공백 축소
      */
     private fun normalize(text: String): String {
-        return text
-            .replace(Regex("[\t\n\r\\x0b\\x0c\u00a0\u2000-\u200b\u2028\u2029\u3000\ufeff]"), " ")
-            .replace(Regex(" {2,}"), " ")
+        // 1. Protect Hangul Compatibility Jamo from NFKC
+        val protected = mutableMapOf<Char, Char>()
+        val puaBase = 0xF0000
+        val sb = StringBuilder(text.length)
+        for (ch in text) {
+            val cp = ch.code
+            if (cp in 0x3131..0x318E) {
+                val pua = (puaBase + protected.size).toChar()
+                protected[pua] = ch
+                sb.append(pua)
+            } else {
+                sb.append(ch)
+            }
+        }
+        // 2. Full NFKC
+        var result = java.text.Normalizer.normalize(sb.toString(), java.text.Normalizer.Form.NFKC)
+        // 3. Restore protected jamo
+        for ((pua, orig) in protected) {
+            result = result.replace(pua.toString(), orig.toString())
+        }
+        // 4. Control chars → space (NOT U+0000)
+        result = result.replace(
+            Regex("[\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f\t\n\r\u00a0\u200b-\u200f\u2028\u2029\u3000\ufeff]"),
+            " ")
+        return result.replace(Regex(" {2,}"), " ")
     }
 
     // ── Pre-tokenize (Metaspace) ───────────────────────────
@@ -194,7 +219,16 @@ class UnigramTokenizer private constructor(
         }
 
         tokenIds.reverse()
-        return tokenIds
+
+        // SentencePiece: 연속 UNK를 하나로 합침
+        val merged = mutableListOf<Int>()
+        for (tid in tokenIds) {
+            if (tid == unkId && merged.isNotEmpty() && merged.last() == unkId) {
+                continue
+            }
+            merged.add(tid)
+        }
+        return merged
     }
 
     // ── Encode ─────────────────────────────────────────────
