@@ -8,6 +8,11 @@
 - **원본 작업 디렉토리:** `C:/Users/Moon/finetuning-workshop/SmallModel`
 - **GitHub:** https://github.com/gomyk/SmallLanguageModels.git
 
+> ## ⚠️ 반드시: `training.csv`는 git에 없음 — 따로 넣어야 함
+> 개인 대화 데이터셋 **`data/training.csv`**(1.8GB) 및 파생물 **`conversation_distill.txt`**(2.3GB)는
+> git에 포함되지 않는다. 동일 학습을 하려면 이 파일을 **직접 받아 `data/`에 넣고**
+> `python build_conversation_corpus.py`로 대화 코퍼스를 재생성해야 한다. → [DATA_SOURCES.md](DATA_SOURCES.md)
+
 ---
 
 ## 1. 이 프로젝트가 하는 일

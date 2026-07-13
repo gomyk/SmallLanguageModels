@@ -3,6 +3,16 @@
 Jina v5 nano (`jinaai/jina-embeddings-v5-text-nano`, 768d/12L/128K vocab) sentence embedding 모델을
 layer pruning + PCA hidden dim reduction + BPE vocab pruning + knowledge distillation으로 압축한다.
 
+> ## ⚠️ 학습 데이터는 별도로 넣어야 함 (training.csv)
+>
+> **개인 대화 데이터셋 `data/training.csv`(1.8GB)와 이를 가공한 `data/distill_corpus/conversation_distill.txt`(2.3GB)는
+> git에 포함되어 있지 않다.** (GitHub 용량 한도 초과 + 개인 데이터)
+>
+> 다른 환경에서 동일하게 학습하려면 **`training.csv`를 직접 받아 `data/`에 넣은 뒤**
+> `python build_conversation_corpus.py`로 대화 코퍼스를 재생성해야 한다.
+> 공개 MTEB 코퍼스(`mteb_distill_10000.txt`)는 git에 포함되어 clone 시 함께 온다.
+> → 상세: **[docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)**, [docs/HANDOFF.md](docs/HANDOFF.md)
+
 ## Quick Start
 
 ```bash

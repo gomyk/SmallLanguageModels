@@ -1,5 +1,11 @@
 # DATA_SOURCES — 데이터셋 출처 및 다운로드 가이드
 
+> ## ⚠️ `training.csv`(개인 대화 데이터셋)는 git에 없음 — 반드시 따로 넣을 것
+> **`data/training.csv`(1.8GB, 비공개)와 그 파생물 `data/distill_corpus/conversation_distill.txt`(2.3GB)는
+> 저장소에 포함되어 있지 않다.** 공개 소스에서 다운로드할 수 없고, 원 소유자로부터 **직접 받아
+> `data/`에 넣어야** 한다. 넣은 뒤 `python build_conversation_corpus.py`로 대화 코퍼스를 재생성하고
+> md5(`7c45f097b12b9f5c69af3109f06b28f3`)로 검증한다. (아래 **B 섹션** 참고)
+
 다른 환경/다른 에이전트가 **동일한 학습 데이터**를 확보하기 위한 출처·다운로드 가이드다.
 학습 코퍼스는 두 갈래다:
 
