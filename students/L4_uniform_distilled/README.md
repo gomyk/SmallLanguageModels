@@ -104,6 +104,86 @@ embeddings = model.encode(sentences)
 print(embeddings.shape)  # (3, 384)
 ```
 
+## MTEB Evaluation Results
+
+**Overall Average: 54.62%**
+
+| Task Group | Average |
+|---|---|
+| Classification | 58.95% |
+| Clustering | 36.16% |
+| STS | 67.19% |
+
+### Classification
+
+| Task | Average | Details |
+|---|---|---|
+| AmazonCounterfactualClassification | 65.7% | en: 68.34%, de: 67.09%, en-ext: 66.57% |
+| Banking77Classification | 78.43% | default: 78.43% |
+| ImdbClassification | 60.43% | default: 60.43% |
+| MTOPDomainClassification | 74.26% | en: 83.96%, es: 78.09%, fr: 76.42% |
+| MassiveIntentClassification | 34.72% | en: 65.57%, zh-CN: 62.56%, ja: 62.19% |
+| MassiveScenarioClassification | 40.37% | en: 71.61%, zh-CN: 69.22%, ja: 67.48% |
+| ToxicConversationsClassification | 61.37% | default: 61.37% |
+| TweetSentimentExtractionClassification | 56.29% | default: 56.29% |
+
+### Clustering
+
+| Task | Average | Details |
+|---|---|---|
+| ArXivHierarchicalClusteringP2P | 51.36% | default: 51.36% |
+| ArXivHierarchicalClusteringS2S | 46.3% | default: 46.3% |
+| BiorxivClusteringP2P.v2 | 26.63% | default: 26.63% |
+| MedrxivClusteringP2P.v2 | 30.15% | default: 30.15% |
+| MedrxivClusteringS2S.v2 | 25.7% | default: 25.7% |
+| StackExchangeClustering.v2 | 46.56% | default: 46.56% |
+| StackExchangeClusteringP2P.v2 | 35.85% | default: 35.85% |
+| TwentyNewsgroupsClustering.v2 | 26.74% | default: 26.74% |
+
+### STS
+
+| Task | Average | Details |
+|---|---|---|
+| BIOSSES | 53.2% | default: 53.2% |
+| SICK-R | 73.61% | default: 73.61% |
+| STS12 | 72.11% | default: 72.11% |
+| STS13 | 75.62% | default: 75.62% |
+| STS14 | 72.2% | default: 72.2% |
+| STS15 | 80.86% | default: 80.86% |
+| STS17 | 48.49% | en-en: 81.73%, es-es: 75.65%, ar-ar: 57.76% |
+| STS22.v2 | 49.17% | fr: 69.99%, es-en: 65.46%, zh: 63.87% |
+| STSBenchmark | 79.48% | default: 79.48% |
+
+
+## Distillation Impact
+
+| Task | Before | After | Delta |
+|---|---|---|---|
+| AmazonCounterfactualClassification | 67.02% | 65.7% | -1.32%p |
+| ArXivHierarchicalClusteringP2P | 49.93% | 51.36% | +1.43%p |
+| ArXivHierarchicalClusteringS2S | 46.08% | 46.3% | +0.22%p |
+| Banking77Classification | 69.18% | 78.43% | +9.25%p |
+| BiorxivClusteringP2P.v2 | 21.47% | 26.63% | +5.16%p |
+| BIOSSES | 45.64% | 53.2% | +7.56%p |
+| ImdbClassification | 59.38% | 60.43% | +1.05%p |
+| MassiveIntentClassification | 36.9% | 34.72% | -2.18%p |
+| MassiveScenarioClassification | 39.51% | 40.37% | +0.86%p |
+| MedrxivClusteringP2P.v2 | 26.05% | 30.15% | +4.1%p |
+| MedrxivClusteringS2S.v2 | 22.94% | 25.7% | +2.76%p |
+| MTOPDomainClassification | 71.48% | 74.26% | +2.78%p |
+| SICK-R | 62.01% | 73.61% | +11.6%p |
+| StackExchangeClustering.v2 | 41.23% | 46.56% | +5.33%p |
+| StackExchangeClusteringP2P.v2 | 32.19% | 35.85% | +3.66%p |
+| STS12 | 57.85% | 72.11% | +14.26%p |
+| STS13 | 65.48% | 75.62% | +10.14%p |
+| STS14 | 60.39% | 72.2% | +11.81%p |
+| STS15 | 73.93% | 80.86% | +6.93%p |
+| STS17 | 46.29% | 48.49% | +2.2%p |
+| STS22.v2 | 37.34% | 49.17% | +11.83%p |
+| STSBenchmark | 65.38% | 79.48% | +14.1%p |
+| ToxicConversationsClassification | 62.02% | 61.37% | -0.65%p |
+| TweetSentimentExtractionClassification | 49.43% | 56.29% | +6.86%p |
+| TwentyNewsgroupsClustering.v2 | 16.43% | 26.74% | +10.31%p |
 
 
 ## Training

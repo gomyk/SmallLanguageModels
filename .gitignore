@@ -7,9 +7,29 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
+venv/
 
 # Claude Code
 .claude/
 
 # System
 bash.exe.stackdump
+*.stackdump
+
+# Training logs (large, per-run — not needed for handoff)
+*.log
+
+# Visualizations
+*.png
+
+# Large / regenerable corpora (rebuild via distill.load_mteb_task_texts)
+data/distill_corpus/*.txt
+data/*.csv
+
+# Binary test artifacts
+android/lib/
+android/test.jar
+
+# Misc empty/local dirs
+새 폴더/

@@ -126,7 +126,7 @@ TEACHERS = {
         "has_glu": True,
         "is_decoder": True,  # RoPE 사용, position/token_type embedding 없음
         "is_peft_model": True,  # PeftMixedModel → EuroBertModel 추출 필요
-        "model_kwargs": {"default_task": "text-matching"},
+        "model_kwargs": {"default_task": "text-matching", "attn_implementation": "eager"},
         "license": "cc-by-nc-4.0",
         "license_notice": (
             "This model is a derivative of Jina AI's jina-embeddings-v5-text-nano. "
@@ -298,6 +298,7 @@ MTEB_TASK_GROUPS = {
         "STS17",
         "STS22.v2",
         "STSBenchmark",
+        "STSBenchmarkMultilingualSTS",
     ],
 }
 
@@ -366,13 +367,15 @@ DISTILL_DATASETS = {
         "hf_id": "mteb/amazon_massive_intent",
         "text_fields": ["text"],
         "splits": ["train"],
-        "subsets": ["en", "ko", "ja", "zh-CN", "es", "fr", "de"],
+        "subsets": ["en", "ko", "ja", "zh-CN", "es", "fr", "de",
+                     "pt", "it", "ru", "ar", "hi", "th", "vi", "id", "pl"],
     },
     "massive_scenario": {
         "hf_id": "mteb/amazon_massive_scenario",
         "text_fields": ["text"],
         "splits": ["train"],
-        "subsets": ["en", "ko", "ja", "zh-CN", "es", "fr", "de"],
+        "subsets": ["en", "ko", "ja", "zh-CN", "es", "fr", "de",
+                     "pt", "it", "ru", "ar", "hi", "th", "vi", "id", "pl"],
     },
     "toxic_conversations": {
         "hf_id": "mteb/toxic_conversations_50k",
@@ -400,6 +403,38 @@ DISTILL_DATASETS = {
         "hf_id": "nyu-mll/multi_nli",
         "text_fields": ["premise", "hypothesis"],
         "splits": ["train"],
+    },
+    # Multilingual NLI (XNLI) — 10/16 target langs
+    "xnli": {
+        "hf_id": "facebook/xnli",
+        "text_fields": ["premise", "hypothesis"],
+        "splits": ["train"],
+        "subsets": ["en", "fr", "es", "de", "ru", "zh", "ar", "hi", "vi", "th"],
+    },
+    # STS17 crosslingual — parallel/aligned sentence pairs for embedding alignment
+    "sts17_cl": {
+        "hf_id": "mteb/sts17-crosslingual-sts",
+        "text_fields": ["sentence1", "sentence2"],
+        "splits": ["test"],
+        "subsets": ["ar-ar", "ar-en", "de-de", "de-en", "en-en",
+                     "es-es", "es-en", "fr-en", "it-en", "ko-ko"],
+    },
+    # Tatoeba bitext — parallel sentences for many languages
+    "tatoeba": {
+        "hf_id": "mteb/tatoeba-bitext-mining",
+        "text_fields": ["sentence1", "sentence2"],
+        "splits": ["test"],
+        "subsets": ["kor-eng", "jpn-eng", "cmn-eng", "spa-eng", "fra-eng",
+                     "deu-eng", "por-eng", "ita-eng", "rus-eng", "ara-eng",
+                     "hin-eng", "tha-eng", "vie-eng", "ind-eng", "pol-eng"],
+    },
+    # MIRACL corpus — multilingual retrieval passages (large, high coverage)
+    "miracl_corpus": {
+        "hf_id": "miracl/miracl-corpus",
+        "text_fields": ["title", "text"],
+        "splits": ["train"],
+        "subsets": ["ar", "en", "es", "fa", "fr", "hi", "id",
+                     "ja", "ko", "ru", "th", "zh"],
     },
 }
 

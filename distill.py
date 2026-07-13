@@ -117,8 +117,26 @@ class TextDataset(Dataset):
         return self.texts[idx]
 
 
-def load_mteb_task_texts(max_per_dataset=10000, cache_dir="data/distill_corpus"):
-    """MTEB Classification/Clustering/STS 태스크 데이터셋에서 텍스트를 수집한다."""
+
+
+def load_conversation_texts(cache_dir="data/distill_corpus"):
+    """대화 데이터에서 추출한 텍스트를 로드한다 (개별 발화 + 전체 대화)."""
+    conv_file = os.path.join(cache_dir, "conversation_distill.txt")
+    if not os.path.exists(conv_file):
+        return []
+    print(f"Loading conversation distillation corpus from {conv_file}")
+    with open(conv_file, "r", encoding="utf-8") as f:
+        texts = [line.strip() for line in f if line.strip()]
+    print(f"  Loaded {len(texts):,} conversation texts")
+    return texts
+
+
+def load_mteb_task_texts(max_per_dataset=10000, cache_dir="data/distill_corpus",
+                         include_conversations=True):
+    """MTEB Classification/Clustering/STS 태스크 데이터셋에서 텍스트를 수집한다.
+
+    include_conversations=True이면 대화 데이터도 함께 로드한다.
+    """
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, f"mteb_distill_{max_per_dataset}.txt")
 
@@ -127,6 +145,10 @@ def load_mteb_task_texts(max_per_dataset=10000, cache_dir="data/distill_corpus")
         with open(cache_file, "r", encoding="utf-8") as f:
             texts = [line.strip() for line in f if line.strip()]
         print(f"  Loaded {len(texts):,} sentences")
+        if include_conversations:
+            conv_texts = load_conversation_texts(cache_dir)
+            texts.extend(conv_texts)
+            print(f"  Total distillation corpus: {len(texts):,} texts")
         return texts
 
     print("Loading MTEB task datasets for distillation...")
@@ -172,6 +194,11 @@ def load_mteb_task_texts(max_per_dataset=10000, cache_dir="data/distill_corpus")
     with open(cache_file, "w", encoding="utf-8") as f:
         for text in unique_texts:
             f.write(text.strip() + "\n")
+
+    if include_conversations:
+        conv_texts = load_conversation_texts(cache_dir)
+        unique_texts.extend(conv_texts)
+        print(f"  Total distillation corpus: {len(unique_texts):,} texts")
 
     return unique_texts
 
@@ -246,26 +273,22 @@ def distill_student(
     for param in teacher.parameters():
         param.requires_grad = False
 
-    # Student 로드
-    student = SentenceTransformer(student_path, device=device,
-                                   trust_remote_code=True)
+    # ── 체크포인트 경로 ──
+    ckpt_dir = student_path + suffix
+    ckpt_state_path = os.path.join(ckpt_dir, "training_state.pt")
+
+    # Student 로드 (체크포인트가 있으면 이어서 학습)
+    _student_kwargs = {"attn_implementation": "eager"}
+    if os.path.exists(ckpt_dir) and os.path.exists(os.path.join(ckpt_dir, "config.json")):
+        print(f"  Resuming model from checkpoint: {ckpt_dir}")
+        student = SentenceTransformer(ckpt_dir, device=device,
+                                       trust_remote_code=True,
+                                       model_kwargs=_student_kwargs)
+    else:
+        student = SentenceTransformer(student_path, device=device,
+                                       trust_remote_code=True,
+                                       model_kwargs=_student_kwargs)
     student.train()
-
-    # Optimizer
-    optimizer = torch.optim.AdamW(student.parameters(), lr=lr, weight_decay=0.01)
-
-    # DataLoader
-    dataset = TextDataset(texts)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-
-    # Cosine LR scheduler
-    total_steps = len(dataloader) * epochs
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
-
-    # Training loop
-    best_loss = float("inf")
-    no_improve_count = 0
-    loss_fn = nn.MSELoss()
 
     tokenizer = student.tokenizer
     student_transformer = student[0].auto_model
@@ -274,7 +297,6 @@ def distill_student(
     # Teacher/Student 차원이 다를 때 학습 가능한 projection layer 추가
     teacher_dim = teacher.get_sentence_embedding_dimension()
     student_dim = student.get_sentence_embedding_dimension()
-    # Matryoshka 등 dim이 None인 경우 실제 encode로 추정
     if teacher_dim is None:
         with torch.no_grad():
             sample = teacher.encode(["test"], convert_to_tensor=True, device=device)
@@ -288,58 +310,124 @@ def distill_student(
     proj = None
     if student_dim != teacher_dim:
         proj = nn.Linear(student_dim, teacher_dim).to(device)
-        # 이전 distillation에서 저장된 projection이 있으면 로드
-        proj_path = os.path.join(student_path + suffix, "proj.pt")
+        proj_path = os.path.join(ckpt_dir, "proj.pt")
         if os.path.exists(proj_path):
             proj.load_state_dict(torch.load(proj_path, map_location=device, weights_only=True))
-            print(f"  Projection: {student_dim}d → {teacher_dim}d (resumed from {proj_path})")
+            print(f"  Projection: {student_dim}d → {teacher_dim}d (resumed)")
         else:
             print(f"  Projection: {student_dim}d → {teacher_dim}d (new)")
-        optimizer = torch.optim.AdamW(
-            list(student.parameters()) + list(proj.parameters()),
-            lr=lr, weight_decay=0.01,
-        )
 
-    for epoch in range(epochs):
+    # Optimizer
+    all_params = list(student.parameters()) + (list(proj.parameters()) if proj else [])
+    optimizer = torch.optim.AdamW(all_params, lr=lr, weight_decay=0.01)
+
+    # DataLoader (고정 seed로 shuffle 순서 재현)
+    dataset = TextDataset(texts)
+    g = torch.Generator()
+    g.manual_seed(42)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
+                            drop_last=True, generator=g)
+
+    # Cosine LR scheduler
+    total_steps = len(dataloader) * epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+
+    # Training state
+    best_loss = float("inf")
+    no_improve_count = 0
+    start_epoch = 0
+    start_step = 0
+    global_step = 0
+    loss_fn = nn.MSELoss()
+
+    # ── 체크포인트에서 학습 상태 복원 ──
+    if os.path.exists(ckpt_state_path):
+        print(f"  Restoring training state from {ckpt_state_path}")
+        state = torch.load(ckpt_state_path, map_location=device, weights_only=False)
+        optimizer.load_state_dict(state["optimizer"])
+        scheduler.load_state_dict(state["scheduler"])
+        best_loss = state["best_loss"]
+        no_improve_count = state["no_improve_count"]
+        start_epoch = state["epoch"]
+        start_step = state["step"]
+        global_step = state["global_step"]
+        rng = state["rng_state"].cpu()
+        g.set_state(rng)
+        print(f"  Resumed: epoch={start_epoch+1}, step={start_step}, "
+              f"global_step={global_step}, best_loss={best_loss:.4f}")
+
+    def save_checkpoint(epoch, step, global_step, epoch_loss, n_batches):
+        """모델 + 전체 학습 상태를 체크포인트로 저장."""
+        import gc
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        os.makedirs(ckpt_dir, exist_ok=True)
+        student_transformer.save_pretrained(ckpt_dir)
+        tokenizer.save_pretrained(ckpt_dir)
+        if proj:
+            torch.save(proj.state_dict(), os.path.join(ckpt_dir, "proj.pt"))
+        torch.save({
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "best_loss": best_loss,
+            "no_improve_count": no_improve_count,
+            "epoch": epoch,
+            "step": step,
+            "global_step": global_step,
+            "rng_state": g.get_state(),
+        }, ckpt_state_path)
+        avg = epoch_loss / max(n_batches, 1)
+        print(f"\n  Checkpoint @ epoch {epoch+1} step {step} "
+              f"(global {global_step}): avg_loss={avg:.4f}", flush=True)
+
+    for epoch in range(start_epoch, epochs):
         epoch_loss = 0
         n_batches = 0
         student_transformer.train()
         if proj:
             proj.train()
 
+        skip_steps = start_step if epoch == start_epoch else 0
+
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}",
                     disable=os.environ.get("TQDM_DISABLE", "") == "1")
-        for batch_texts in pbar:
+        for step_in_epoch, batch_texts in enumerate(pbar):
+            # 이전 체크포인트까지의 step은 건너뛰기
+            if step_in_epoch < skip_steps:
+                if step_in_epoch % 10000 == 0 and step_in_epoch > 0:
+                    pbar.set_postfix({"skipping": f"{step_in_epoch}/{skip_steps}"})
+                continue
+
             try:
-                # Teacher forward (no grad)
+                truncated_texts = [t[:max_length * 6] for t in list(batch_texts)]
+
                 with torch.no_grad():
                     teacher_embeddings = teacher.encode(
-                        list(batch_texts),
+                        truncated_texts,
                         convert_to_tensor=True,
                         show_progress_bar=False,
                         device=device,
                     ).clone()
 
-                # Student forward
                 encoded = tokenizer(
-                    list(batch_texts),
+                    truncated_texts,
                     padding=True,
                     truncation=True,
                     max_length=max_length,
                     return_tensors="pt",
                 ).to(device)
-            except Exception:
-                continue  # 인코딩 실패 배치 스킵
+            except BaseException:
+                global_step += 1
+                continue
 
             model_output = student_transformer(**encoded)
             token_emb = model_output[0]
             mask = encoded["attention_mask"].unsqueeze(-1).expand(token_emb.size()).float()
             student_embeddings = torch.sum(token_emb * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
 
-            # 차원이 다르면 projection 적용
             projected = proj(student_embeddings) if proj else student_embeddings
 
-            # Loss
             loss = loss_fn(projected, teacher_embeddings)
             cos_loss = 1 - F.cosine_similarity(projected, teacher_embeddings).mean()
             total_loss = mse_weight * loss + cos_weight * cos_loss
@@ -352,22 +440,26 @@ def distill_student(
 
             epoch_loss += total_loss.item()
             n_batches += 1
+            global_step += 1
             pbar.set_postfix({"loss": f"{total_loss.item():.4f}", "cos": f"{cos_loss.item():.4f}"})
 
+            # 주기적 체크포인트 (1000 step마다)
+            if n_batches % 1000 == 0:
+                save_checkpoint(epoch, step_in_epoch + 1, global_step,
+                                epoch_loss, n_batches)
+
+        # epoch 종료 후 체크포인트 저장
         avg_loss = epoch_loss / max(n_batches, 1)
         print(f"  Epoch {epoch+1}: avg_loss={avg_loss:.4f}")
 
         if avg_loss < best_loss:
             best_loss = avg_loss
             no_improve_count = 0
-            distilled_path = student_path + suffix
-            os.makedirs(distilled_path, exist_ok=True)
-            student_transformer.save_pretrained(distilled_path)
-            tokenizer.save_pretrained(distilled_path)
-            # sentence-transformers 포맷으로 저장
+            save_checkpoint(epoch + 1, 0, global_step, epoch_loss, n_batches)
+            # sentence-transformers 포맷으로도 저장
             from sentence_transformers import models as st_models
             word_model = st_models.Transformer(
-                distilled_path,
+                ckpt_dir,
                 config_args={"trust_remote_code": True},
                 model_args={"trust_remote_code": True},
                 tokenizer_args={"trust_remote_code": True},
@@ -375,14 +467,14 @@ def distill_student(
             pool_model = st_models.Pooling(word_model.get_word_embedding_dimension(),
                                            pooling_mode_mean_tokens=True)
             st_model = SentenceTransformer(modules=[word_model, pool_model])
-            st_model.save(distilled_path)
-            # Projection layer도 저장 (재개 시 로드용)
+            st_model.save(ckpt_dir)
             if proj:
-                torch.save(proj.state_dict(), os.path.join(distilled_path, "proj.pt"))
-            print(f"  Saved best model to {distilled_path} (loss={best_loss:.4f})")
+                torch.save(proj.state_dict(), os.path.join(ckpt_dir, "proj.pt"))
+            print(f"  Saved best model (loss={best_loss:.4f})")
         else:
             no_improve_count += 1
             print(f"  No improvement ({no_improve_count}/{patience})")
+            save_checkpoint(epoch + 1, 0, global_step, epoch_loss, n_batches)
             if no_improve_count >= patience:
                 print(f"  Early stopping at epoch {epoch+1}")
                 break
@@ -519,8 +611,12 @@ def main():
     parser.add_argument("--cos-weight", type=float, default=0.5)
     parser.add_argument("--mse-weight", type=float, default=1.0)
     parser.add_argument("--suffix", default="_distilled")
-    parser.add_argument("--max-per-dataset", type=int, default=10000,
-                        help="데이터셋당 최대 텍스트 수")
+    parser.add_argument("--max-per-dataset", type=int, default=999999999,
+                        help="데이터셋당 최대 텍스트 수 (기본: 전체)")
+    parser.add_argument("--no-conversations", action="store_true",
+                        help="대화 데이터 제외 (MTEB 데이터만 사용)")
+    parser.add_argument("--student-hf", type=str, default=None,
+                        help="HuggingFace에서 student 모델 로드 (e.g., gomyk/jina-v5-h256-distilled)")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-vram-frac", type=float, default=None,
                         help="GPU VRAM 사용 비율 제한 (0.0~1.0, 예: 0.5 = 50%%)")
@@ -542,8 +638,12 @@ def main():
             print(f"CUDA VRAM limit: {args.max_vram_frac*100:.0f}%")
         print(f"CUDA available, using GPU: {torch.cuda.get_device_name(0)}")
 
-    # 학습 데이터 로드 (MTEB 태스크 데이터셋)
-    texts = load_mteb_task_texts(max_per_dataset=args.max_per_dataset)
+    # 학습 데이터 로드 (MTEB 태스크 + 대화 데이터)
+    include_conv = not args.no_conversations
+    texts = load_mteb_task_texts(
+        max_per_dataset=args.max_per_dataset,
+        include_conversations=include_conv,
+    )
 
     # Student 디렉토리
     students_dir = get_teacher_students_dir(teacher_key)
@@ -594,7 +694,16 @@ def main():
                 patience=args.patience,
             )
         else:
-            student_path = os.path.join(students_dir, student_name)
+            # HF 모델을 student로 사용하는 경우: 로컬에 다운로드
+            if args.student_hf:
+                from huggingface_hub import snapshot_download
+                hf_local = os.path.join(students_dir, student_name)
+                if not os.path.exists(hf_local):
+                    print(f"Downloading {args.student_hf} → {hf_local}")
+                    snapshot_download(args.student_hf, local_dir=hf_local)
+                student_path = hf_local
+            else:
+                student_path = os.path.join(students_dir, student_name)
             if not os.path.exists(student_path):
                 student_path = os.path.join(STUDENTS_DIR, student_name)
             if not os.path.exists(student_path):

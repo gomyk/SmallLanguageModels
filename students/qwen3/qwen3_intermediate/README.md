@@ -68,9 +68,9 @@ print(embeddings.shape)
 # Get the similarity scores for the embeddings
 similarities = model.similarity(embeddings, embeddings)
 print(similarities)
-# tensor([[1.0000, 0.0892, 0.3468],
-#         [0.0892, 1.0000, 0.2483],
-#         [0.3468, 0.2483, 1.0000]])
+# tensor([[1.0000, 0.3057, 0.0671],
+#         [0.3057, 1.0000, 0.0084],
+#         [0.0671, 0.0084, 1.0000]])
 ```
 
 <!--

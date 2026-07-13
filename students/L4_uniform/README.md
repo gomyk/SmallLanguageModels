@@ -103,6 +103,56 @@ embeddings = model.encode(sentences)
 print(embeddings.shape)  # (3, 384)
 ```
 
+## MTEB Evaluation Results
+
+**Overall Average: 49.02%**
+
+| Task Group | Average |
+|---|---|
+| Classification | 56.87% |
+| Clustering | 32.04% |
+| STS | 57.15% |
+
+### Classification
+
+| Task | Average | Details |
+|---|---|---|
+| AmazonCounterfactualClassification | 67.02% | en: 70.31%, en-ext: 68.1%, de: 65.73% |
+| Banking77Classification | 69.18% | default: 69.18% |
+| ImdbClassification | 59.38% | default: 59.38% |
+| MTOPDomainClassification | 71.48% | en: 80.02%, es: 73.78%, hi: 71.07% |
+| MassiveIntentClassification | 36.9% | en: 58.41%, zh-CN: 58.07%, ja: 56.73% |
+| MassiveScenarioClassification | 39.51% | zh-CN: 63.96%, en: 62.71%, ja: 59.84% |
+| ToxicConversationsClassification | 62.02% | default: 62.02% |
+| TweetSentimentExtractionClassification | 49.43% | default: 49.43% |
+
+### Clustering
+
+| Task | Average | Details |
+|---|---|---|
+| ArXivHierarchicalClusteringP2P | 49.93% | default: 49.93% |
+| ArXivHierarchicalClusteringS2S | 46.08% | default: 46.08% |
+| BiorxivClusteringP2P.v2 | 21.47% | default: 21.47% |
+| MedrxivClusteringP2P.v2 | 26.05% | default: 26.05% |
+| MedrxivClusteringS2S.v2 | 22.94% | default: 22.94% |
+| StackExchangeClustering.v2 | 41.23% | default: 41.23% |
+| StackExchangeClusteringP2P.v2 | 32.19% | default: 32.19% |
+| TwentyNewsgroupsClustering.v2 | 16.43% | default: 16.43% |
+
+### STS
+
+| Task | Average | Details |
+|---|---|---|
+| BIOSSES | 45.64% | default: 45.64% |
+| SICK-R | 62.01% | default: 62.01% |
+| STS12 | 57.85% | default: 57.85% |
+| STS13 | 65.48% | default: 65.48% |
+| STS14 | 60.39% | default: 60.39% |
+| STS15 | 73.93% | default: 73.93% |
+| STS17 | 46.29% | en-en: 76.54%, es-es: 75.88%, ko-ko: 62.72% |
+| STS22.v2 | 37.34% | zh: 57.86%, es: 54.85%, fr: 51.41% |
+| STSBenchmark | 65.38% | default: 65.38% |
+
 
 
 ## Training
