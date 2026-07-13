@@ -92,6 +92,7 @@ Student (예: 384d/6L/축소 vocab) → MTEB 25~26개 태스크로 평가
 
 ## 5. 문서 인덱스
 - [SETUP.md](SETUP.md) — 환경 세팅, 의존성, GPU/VRAM 참고
+- [DATA_SOURCES.md](DATA_SOURCES.md) — **데이터셋 출처 + 다운로드 방법** (공개 MTEB 15종 + 개인 대화 코퍼스)
 - [PIPELINE.md](PIPELINE.md) — 4단계 파이프라인 상세 + 스크립트 레퍼런스
 - [TEACHERS.md](TEACHERS.md) — teacher별 설정/주의사항 + **새 모델 추가 방법**
 - [CORPUS.md](CORPUS.md) — 코퍼스 구성/언어 + **새 언어 추가 방법**
