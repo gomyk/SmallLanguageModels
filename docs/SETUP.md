@@ -42,20 +42,18 @@ numpy, pandas, tqdm, sentencepiece, protobuf
 | `HF_TOKEN` | HuggingFace Hub 업로드(`upload_to_hub.py`) 시 |
 | `CUDA_VISIBLE_DEVICES` | 특정 GPU 지정 |
 
-## 4. 코퍼스 준비
+## 4. 코퍼스 준비 (학습 데이터 동일 재현)
 
-git에는 대용량 코퍼스 파일이 포함되지 않는다 (`.gitignore`). 아래로 재생성한다:
+- `data/distill_corpus/mteb_distill_10000.txt`(364,617줄, 40MB)는 **git에 포함**되어 clone 시 함께 온다.
+  → 재생성하지 말 것. (`set()` dedup 때문에 재생성하면 순서가 달라져 학습이 달라진다.)
+- `data/distill_corpus/conversation_distill.txt`(19,520,517줄, 2.3GB)는 GitHub 한도 초과라 git에 없다.
+  **외장/클라우드/scp로 직접 복사** 후 검증:
+  ```bash
+  wc -l data/distill_corpus/conversation_distill.txt   # 19520517
+  md5sum data/distill_corpus/conversation_distill.txt   # 7c45f097b12b9f5c69af3109f06b28f3
+  ```
 
-```bash
-# MTEB 태스크 데이터셋에서 distillation 코퍼스 생성 (HF에서 다운로드, ~360K 문장)
-python -c "from distill import load_mteb_task_texts; load_mteb_task_texts(include_conversations=False)"
-```
-
-결과: `data/distill_corpus/mteb_distill_10000.txt`
-
-> `conversation_distill.txt`(2.3GB, 19.5M 문장)는 별도 자산이라 git에 없다.
-> 이 파일이 없으면 학습 시 `include_conversations=False`를 쓰거나, 코퍼스만으로 학습한다.
-> 자세한 내용은 [CORPUS.md](CORPUS.md).
+두 파일이 다 있으면 v4와 동일한 19.88M 코퍼스로 학습된다. 상세/검증 md5는 [CORPUS.md](CORPUS.md).
 
 ## 5. 동작 확인 (smoke test)
 

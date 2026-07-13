@@ -23,9 +23,13 @@ bash.exe.stackdump
 # Visualizations
 *.png
 
-# Large / regenerable corpora (rebuild via distill.load_mteb_task_texts)
+# Large / non-reproducible corpora (must be transferred manually — see docs/CORPUS.md)
 data/distill_corpus/*.txt
 data/*.csv
+# EXCEPTION: keep the MTEB distillation corpus so training data is byte-identical
+# across environments (set()-based dedup is NOT deterministic on regeneration).
+!data/distill_corpus/mteb_distill_10000.txt
+!data/distill_corpus/distill_texts_5000.txt
 
 # Binary test artifacts
 android/lib/

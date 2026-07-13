@@ -66,13 +66,13 @@ Student (예: 384d/6L/축소 vocab) → MTEB 25~26개 태스크로 평가
    cd SmallLanguageModels
    pip install -r requirements.txt
    ```
-2. **코퍼스 재생성** (git에는 대용량 코퍼스가 없다 — HuggingFace에서 다시 내려받음)
-   ```bash
-   python -c "from distill import load_mteb_task_texts; load_mteb_task_texts()"
-   ```
-   → `data/distill_corpus/mteb_distill_10000.txt` 재생성 (약 360K 문장).
-   ⚠️ `conversation_distill.txt`(2.3GB, 19.5M 문장)는 git에 포함되지 않으며 **별도 자산**이다.
-   없으면 `include_conversations=False`로도 학습 가능하다 ([CORPUS.md](CORPUS.md) 참고).
+2. **학습 데이터 맞추기 (동일 재현 시 필수)** → [CORPUS.md](CORPUS.md#️-학습-데이터-정확-재현-중요)
+   - `mteb_distill_10000.txt`(364,617줄, 40MB)는 **git에 포함**되어 있어 clone하면 동일하게 딸려온다.
+     (dedup이 `set()` 기반이라 재생성하면 순서가 달라져 학습이 달라진다 → 그래서 파일을 커밋해 둠.)
+   - ⚠️ `conversation_distill.txt`(19,520,517줄, 2.3GB, md5 `7c45f097…`)는 GitHub 용량 한도 초과라
+     git에 없다. **외장/클라우드/scp로 직접 복사** 후 `md5sum`으로 동일성 검증한다.
+   - 두 파일이 다 있으면 v4와 **동일한 19.88M 코퍼스**로 재학습된다. 없으면
+     `include_conversations=False`(mteb 360K만)로도 학습 가능하나 결과가 달라진다.
 3. **작업 이어가기**
    - 언어 추가: [CORPUS.md](CORPUS.md#언어-추가하기)
    - base 모델(teacher) 추가: [TEACHERS.md](TEACHERS.md#새-teacher-모델-추가하기)

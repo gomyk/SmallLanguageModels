@@ -41,13 +41,48 @@ HuggingFace 데이터셋들에서 추출한다 (`distill.py`의 `load_mteb_task_
   데이터로 이 파일을 재생성한다(한 줄에 한 텍스트).
 - me5s v4는 (mteb 360K + conversation 19.5M) = **19.88M** 코퍼스로 학습했다.
 
-## 코퍼스 재생성
+## ⚠️ 학습 데이터 정확 재현 (중요)
+
+다른 환경에서 **동일한 학습 데이터**로 재학습하려면 코퍼스 파일 자체가 바이트 단위로 같아야 한다.
+**재생성(regenerate)으로는 동일해지지 않는다** — `load_mteb_task_texts`의 dedup이
+`list(set(all_texts))`라서 파이썬 실행마다 순서가 달라지고(PYTHONHASHSEED), 이후
+`DataLoader(shuffle=True, seed=42)`가 "다른 순서"에 적용돼 배치 구성이 달라진다.
+
+그래서 실제로 쓴 코퍼스 파일을 그대로 옮기는 것이 원칙이다.
+
+### v4(주력) distillation에 실제로 쓴 코퍼스 = 아래 2개 파일
+
+| 파일 | 라인수 | 크기 | md5 | 전송 방법 |
+|------|--------|------|-----|-----------|
+| `data/distill_corpus/mteb_distill_10000.txt` | 364,617 | 40MB | `7acf7640347111d1734f08b48caf87a5` | **git에 포함됨** ✅ |
+| `data/distill_corpus/conversation_distill.txt` | 19,520,517 | 2.3GB | `7c45f097b12b9f5c69af3109f06b28f3` | **수동 전송 필요** ⚠️ |
+| (합계) | **19,885,134 (≈19.88M)** | | | |
+
+- `mteb_distill_10000.txt`는 재현 불가 문제 때문에 **일부러 git에 커밋**해 두었다 → clone하면 동일.
+- `conversation_distill.txt`(2.3GB)는 GitHub 100MB/파일 한도를 넘어 git에 못 올린다.
+  외장드라이브/클라우드/`scp`·`rsync` 등으로 **직접 복사**해서 `data/distill_corpus/`에 둔다.
+  복사 후 아래로 동일성 검증:
+  ```bash
+  wc -l data/distill_corpus/conversation_distill.txt   # 19520517 이어야 함
+  md5sum data/distill_corpus/conversation_distill.txt   # 7c45f097b12b9f5c69af3109f06b28f3
+  ```
+- 두 파일이 모두 있으면 `run_me5s_v4_distill.py`(내부에서 `include_conversations=True`)가
+  19.88M 코퍼스로 v4와 **동일하게** 학습한다.
+- conversation 파일 없이 진행하려면 `include_conversations=False` → mteb 360K만으로 학습(결과 달라짐).
+
+> 참고: `distill_texts_5000.txt`(101,492줄, md5 `8425d064a7c7363ae7ee1bea766314b4`)는 레거시
+> 다국어 코퍼스(`load_multilingual_texts`)로 v4에는 쓰이지 않지만, 과거 실험 재현용으로 git에 포함해 둠.
+> `training.csv`(1.8GB)는 **LoRA 트랙 전용**(개인 데이터 포함)이라 임베딩 distillation과 무관하고 git 제외.
+
+## 코퍼스 (재)생성 — 참고용
+
+코퍼스 파일이 아예 없을 때 MTEB 소스에서 새로 만들 수 있다. 단, 위에서 설명했듯 기존 학습과
+**바이트 동일하지는 않다**(순서 차이). 새 언어를 추가할 때 등 "내용을 갱신"하는 용도로 쓴다.
 
 ```bash
-# MTEB 소스만 (재현 가능, ~360K)
 python -c "from distill import load_mteb_task_texts; load_mteb_task_texts(include_conversations=False)"
 ```
-캐시 파일이 이미 있으면 그대로 로드하므로, 새로 받으려면 기존 `mteb_distill_10000.txt`를 지운다.
+캐시 파일이 이미 있으면 그대로 로드하므로, 새로 만들려면 기존 `mteb_distill_10000.txt`를 먼저 지운다.
 
 ---
 
